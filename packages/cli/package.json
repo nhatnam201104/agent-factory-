@@ -1,0 +1,20 @@
+{
+  "name": "@factory-arena/cli",
+  "version": "1.0.0",
+  "type": "module",
+  "bin": {
+    "factory-arena": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "start": "node dist/index.js start"
+  },
+  "dependencies": {
+    "@factory-arena/adapters": "workspace:*",
+    "@factory-arena/core": "workspace:*",
+    "@factory-arena/hub-server": "workspace:*",
+    "@factory-arena/protocol": "workspace:*"
+  }
+}

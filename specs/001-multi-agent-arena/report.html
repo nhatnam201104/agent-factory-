@@ -1,0 +1,990 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Factory Virtual Office & Arena — Phòng làm việc 3D Quản lý Task Đa Agent</title>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --bg: #080d1a;
+      --surface: #11192e;
+      --surface-2: #182340;
+      --border: #27365e;
+      --text: #ebf1ff;
+      --muted: #98acd6;
+      --accent: #38f2c8;
+      --accent-2: #60a5fa;
+      --warn: #fbbf24;
+      --danger: #fb7185;
+      --ok: #34d399;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: radial-gradient(circle at top right, #16244b 0%, var(--bg) 60%);
+      color: var(--text);
+      line-height: 1.55;
+    }
+    header {
+      padding: 18px 28px 14px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(12, 19, 36, 0.92);
+      backdrop-filter: blur(12px);
+      position: sticky;
+      top: 0;
+      z-index: 30;
+    }
+    .header-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    h1 { margin: 0 0 3px; font-size: 1.32rem; letter-spacing: -0.02em; }
+    .subtitle { color: var(--muted); font-size: 0.86rem; margin: 0; }
+    .badges { display: flex; gap: 7px; flex-wrap: wrap; }
+    .badge {
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-size: 0.74rem;
+      font-weight: 600;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--accent);
+    }
+    .tabs { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+    .tab-btn {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--border);
+      padding: 7px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 0.84rem;
+      transition: all 0.15s ease;
+    }
+    .tab-btn:hover { color: var(--text); border-color: var(--accent-2); }
+    .tab-btn.active {
+      background: linear-gradient(135deg, rgba(56,242,200,0.18), rgba(96,165,250,0.2));
+      color: var(--accent);
+      border-color: var(--accent);
+    }
+    main { max-width: 1420px; margin: 0 auto; padding: 20px 28px 56px; }
+    .section { display: none; }
+    .section.active { display: block; }
+
+    /* 3D OFFICE WORKSPACE LAYOUT */
+    .office-toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 14px;
+      padding: 10px 14px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+    }
+    .toolbar-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .btn {
+      background: var(--surface-2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 7px 12px;
+      border-radius: 7px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn:hover { border-color: var(--accent); color: var(--accent); }
+    .btn-primary {
+      background: linear-gradient(135deg, #2dd4bf, #3b82f6);
+      color: #04131a;
+      border: none;
+      font-weight: 700;
+    }
+    .btn-primary:hover { opacity: 0.92; color: #04131a; }
+    .btn-warn {
+      background: rgba(251, 191, 36, 0.16);
+      color: var(--warn);
+      border-color: rgba(251, 191, 36, 0.5);
+    }
+    .office-grid {
+      display: grid;
+      grid-template-columns: 1.65fr 1fr;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+    @media (max-width: 1050px) { .office-grid { grid-template-columns: 1fr; } }
+    .viewport-card {
+      position: relative;
+      background: #070c18;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      min-height: 500px;
+    }
+    #office-canvas { width: 100%; height: 500px; display: block; cursor: grab; }
+    #office-canvas:active { cursor: grabbing; }
+    #labels-layer {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    .emp-tag {
+      position: absolute;
+      transform: translate(-50%, -100%);
+      background: rgba(11, 18, 36, 0.9);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 4px 8px;
+      font-size: 0.72rem;
+      white-space: nowrap;
+      pointer-events: auto;
+      cursor: pointer;
+      box-shadow: 0 6px 16px rgba(0,0,0,0.45);
+      transition: border-color 0.15s;
+    }
+    .emp-tag:hover, .emp-tag.selected { border-color: var(--accent); }
+    .emp-tag.hand-raised {
+      border-color: var(--warn);
+      background: rgba(65, 42, 6, 0.92);
+      animation: pulseWarn 1.1s infinite alternate;
+    }
+    @keyframes pulseWarn {
+      from { transform: translate(-50%, -100%) scale(1); }
+      to { transform: translate(-50%, -106%) scale(1.05); }
+    }
+    .viewport-hud {
+      position: absolute;
+      bottom: 10px;
+      left: 12px;
+      right: 12px;
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.75rem;
+      color: var(--muted);
+      background: rgba(10, 16, 30, 0.78);
+      padding: 6px 12px;
+      border-radius: 8px;
+      border: 1px solid rgba(40,54,94,0.7);
+      pointer-events: none;
+    }
+    .side-stack { display: flex; flex-direction: column; gap: 14px; }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px 18px;
+    }
+    .card h2 { margin: 0 0 10px; font-size: 1.05rem; color: #fff; display: flex; align-items: center; gap: 8px; }
+    .card h3 { margin: 0 0 6px; font-size: 0.94rem; color: var(--accent); }
+    .meter-bar {
+      height: 7px;
+      background: #0b1224;
+      border-radius: 99px;
+      overflow: hidden;
+      margin: 4px 0 8px;
+    }
+    .meter-fill { height: 100%; border-radius: 99px; transition: width 0.3s; }
+    .kanban-board {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(220px, 1fr));
+      gap: 12px;
+      overflow-x: auto;
+    }
+    .kanban-col {
+      background: #0d1426;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 11px;
+    }
+    .kanban-col-header {
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: var(--accent);
+      margin-bottom: 9px;
+      display: flex;
+      justify-content: space-between;
+    }
+    .ticket-card {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 9px 10px;
+      margin-bottom: 8px;
+      font-size: 0.8rem;
+    }
+    .ticket-card .t-id { color: var(--accent-2); font-weight: 700; font-size: 0.72rem; }
+    .ticket-card .t-title { font-weight: 600; margin: 3px 0 6px; }
+    .ticket-card select {
+      width: 100%;
+      background: #0c1324;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 4px 6px;
+      font-size: 0.75rem;
+    }
+    .debate-feed {
+      max-height: 190px;
+      overflow-y: auto;
+      font-size: 0.79rem;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+    .feed-item {
+      background: #0d1529;
+      border-left: 3px solid var(--accent-2);
+      padding: 6px 9px;
+      border-radius: 5px;
+    }
+    .grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 16px; margin-bottom: 20px; }
+    .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(410px, 1fr)); gap: 18px; margin-bottom: 20px; }
+    .kpi { font-size: 1.65rem; font-weight: 700; color: var(--accent); margin-bottom: 4px; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+    th, td { text-align: left; padding: 10px 11px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { color: var(--accent); font-weight: 600; background: rgba(24, 35, 64, 0.7); }
+    code {
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 0.83em;
+      background: rgba(96, 165, 250, 0.14);
+      color: #bfdbfe;
+      padding: 2px 6px;
+      border-radius: 5px;
+    }
+    .diagram-box { background: #0c1324; border: 1px solid var(--border); border-radius: 10px; padding: 16px; overflow-x: auto; margin: 12px 0; }
+    .pill-ok { color: var(--ok); font-weight: 600; }
+    .pill-warn { color: var(--warn); font-weight: 600; }
+    .pill-danger { color: var(--danger); font-weight: 600; }
+    .check-row { display: flex; align-items: flex-start; gap: 10px; padding: 9px 0; border-bottom: 1px dashed rgba(157,176,217,0.18); }
+    .signoff-box { margin-top: 16px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .signoff-box input { background: var(--surface-2); border: 1px solid var(--border); color: var(--text); padding: 8px 12px; border-radius: 7px; min-width: 220px; }
+    .btn-approve { background: var(--accent); color: #052019; border: none; padding: 8px 16px; border-radius: 7px; font-weight: 700; cursor: pointer; }
+    #signoff-status { font-size: 0.86rem; color: var(--ok); font-weight: 600; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-top">
+      <div>
+        <h1>🏢 Factory Virtual Office & Multi-Agent Arena</h1>
+        <p class="subtitle">Mỗi Phiên AI (MSW Agent · IDE · API Key · CLI) = 1 Nhân viên 3D tại bàn riêng · Quản lý Task Kanban & Phòng Họp Kính Phản Biện</p>
+      </div>
+      <div class="badges">
+        <span class="badge">1 AI Session = 1 Employee</span>
+        <span class="badge">MCP + ACP + API Key + A2A</span>
+        <span class="badge">Git Worktree Isolation</span>
+        <span class="badge">Spec & Plan: PASS</span>
+      </div>
+    </div>
+    <nav class="tabs">
+      <button class="tab-btn active" onclick="openTab('live3d', this)">🏢 1. Phòng làm việc 3D & Bảng Task (Live Prototype)</button>
+      <button class="tab-btn" onclick="openTab('research', this)">🔍 2. Nghiên cứu GitHub & Virtual Office</button>
+      <button class="tab-btn" onclick="openTab('architecture', this)">🏗️ 3. Kiến trúc Đa Kết nối & Hội đồng</button>
+      <button class="tab-btn" onclick="openTab('contracts', this)">🔌 4. Data Model & MCP Contracts</button>
+      <button class="tab-btn" onclick="openTab('signoff', this)">✅ 5. Lộ trình & Ký duyệt</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- TAB 1: LIVE 3D VIRTUAL OFFICE + TASK BOARD -->
+    <section id="live3d" class="section active">
+      <div class="office-toolbar">
+        <div>
+          <strong style="color:var(--accent)">Trạng thái Văn phòng:</strong>
+          <span id="office-mode-label" style="font-size:0.86rem;margin-left:6px;">Các nhân viên đang làm Task tại bàn cá nhân (Git Worktree riêng)</span>
+        </div>
+        <div class="toolbar-actions">
+          <button class="btn btn-primary" onclick="summonWarRoom()">⚖️ Triệu tập Họp Phản biện (Đi vào Phòng Họp 3D)</button>
+          <button class="btn" onclick="returnToDesks()">💻 Giải tán về Bàn làm Task</button>
+          <button class="btn btn-warn" onclick="triggerHandRaise()">✋ Mô phỏng IDE Xin quyền</button>
+          <button class="btn" onclick="spawnNewSession()">➕ Mở thêm Session AI mới (+1 Nhân viên)</button>
+        </div>
+      </div>
+
+      <div class="office-grid">
+        <div class="viewport-card" id="viewport-wrap">
+          <canvas id="office-canvas"></canvas>
+          <div id="labels-layer"></div>
+          <div class="viewport-hud">
+            <span>🖱️ Kéo chuột trái để xoay góc nhìn 3D · Cuộn để thu phóng · Nhấp vào Nhân viên để kiểm tra Session</span>
+            <span id="payroll-summary">Active Sessions: 5 · Tổng chi phí ca: $0.48</span>
+          </div>
+        </div>
+
+        <div class="side-stack">
+          <div class="card" id="inspector-card">
+            <h2>🪪 Thẻ Kiểm tra Nhân viên (Session Inspector)</h2>
+            <div id="inspector-body"></div>
+          </div>
+
+          <div class="card">
+            <h2>🎙️ Nhật ký Phòng Họp Kính & Điều phối Thời gian thực</h2>
+            <div class="debate-feed" id="debate-feed"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>📋 Bảng Quản lý Công việc Công ty (Kanban Task Board — Gán trực tiếp cho từng Nhân viên Phiên AI)</h2>
+        <p class="subtitle" style="margin-bottom:12px;">Đổi người phụ trách trên thẻ việc để giao ngay cho nhân viên 3D tương ứng (tự động cấp nhánh <code>Git Worktree</code> cô lập).</p>
+        <div class="kanban-board" id="kanban-board"></div>
+      </div>
+    </section>
+
+    <!-- TAB 2: GITHUB RESEARCH -->
+    <section id="research" class="section">
+      <div class="grid-3">
+        <div class="card">
+          <div class="kpi">1 Session = 1 Nhân viên</div>
+          <p class="subtitle">Mở 2 cửa sổ VS Code/Cursor, 1 phiên MSW Agent và 2 API Key sẽ có đúng 5 nhân viên ngồi tại 5 bàn độc lập (khóa qua <code>session_fingerprint</code>).</p>
+        </div>
+        <div class="card">
+          <div class="kpi">✋ Duyệt Quyền Tại Bàn</div>
+          <p class="subtitle">Khi một phiên IDE/CLI chờ người dùng bấm Allow, nhân viên 3D giơ tay vàng ngay tại bàn — bấm duyệt trực tiếp không cần lục tìm cửa sổ ẩn.</p>
+        </div>
+        <div class="card">
+          <div class="kpi">Họp Kính Ẩn danh</div>
+          <p class="subtitle">Khi gặp bài toán khó, các nhân viên đi bộ vào Phòng Họp Kính: Vòng 1 khóa kín ➔ Vòng 2 chấm chéo <code>Proposal A/B/C</code> ➔ Chốt <code>DecisionRecord</code>.</p>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom: 20px;">
+        <h2>🔍 Đối chiếu Kiến trúc từ GitHub (<code>multi-agent-orchestration</code> & Hệ sinh thái Virtual AI Office)</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Dự án Tham chiếu</th>
+              <th>Tinh hoa học hỏi</th>
+              <th>Khoảng trống hiện hữu</th>
+              <th>Thiết kế trong Factory Virtual Office</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Artifact mẫu + Claude-Office / Claw3D / claw-empire</strong></td>
+              <td>Phòng làm việc 3D hoạt hình, mỗi session 1 bàn riêng, giơ tay xin quyền (✋ Needs You), đi bộ vào bàn họp, bảng Kanban.</td>
+              <td>Thường gắn chặt 1 CLI duy nhất hoặc thiếu máy trạng thái phản biện ẩn danh chống hùa theo.</td>
+              <td>Hỗ trợ đa kênh (MSW + mọi IDE qua MCP/ACP + API Key + CLI + A2A) và gắn 100% hoạt ảnh với trạng thái thật.</td>
+            </tr>
+            <tr>
+              <td><strong>paperclipai/paperclip</strong><br/><span class="subtitle">AI Company Control Plane</span></td>
+              <td>Sơ đồ tổ chức (Org Chart), phiếu việc theo chuỗi mục tiêu (Goal Ancestry), nhịp tim (Heartbeats) & khóa trần ngân sách nhân viên.</td>
+              <td>Giao diện quản trị bảng biểu thuần túy, chưa có không gian văn phòng 3D & cầu nối trực tiếp phiên IDE đang mở.</td>
+              <td>Kết hợp Org Chart + Payroll Budget của Paperclip ngay bên dưới các nhân viên trong Văn phòng 3D.</td>
+            </tr>
+            <tr>
+              <td><strong>desplega-ai/agent-swarm & Fmarzochi/EGC</strong></td>
+              <td>1 MCP Server đồng bộ 29 công cụ AI coding, khóa tệp đang sửa (<code>File Lease</code>), nén log 90% (Token Crusher).</td>
+              <td>Thiếu quy trình tranh luận 4 bước có trọng số và biên bản bảo lưu ý kiến thiểu số.</td>
+              <td>Dùng 1 MCP Server chung để mọi IDE tự điểm danh nhận bàn làm việc (<code>arena_checkin_desk</code>).</td>
+            </tr>
+            <tr>
+              <td><strong>looptroop-ai/LoopTroop</strong></td>
+              <td>LLM Council (draft ➔ vote ➔ refine), chia nhỏ <code>Beads</code>, phục hồi sạch <code>Ralph Loop</code> trên Git Worktree.</td>
+              <td>Đóng kín nội bộ quanh 1 công cụ thực thi.</td>
+              <td>Mỗi nhân viên nhận 1 <code>TaskTicket</code> sẽ chạy trên 1 Git Worktree riêng kèm cơ chế <code>Ralph Clean Retry</code>.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- TAB 3: ARCHITECTURE DIAGRAMS -->
+    <section id="architecture" class="section">
+      <div class="card" style="margin-bottom: 22px;">
+        <h2>🏗️ Sơ đồ 1: Kiến trúc Kết nối Đa phương thức (Unified Multi-Transport Hub)</h2>
+        <p class="subtitle">Sơ đồ này cho thấy cách MSW Agent, các IDE, API Key Models, CLI Agents và Remote A2A Agents hội tụ về một máy trạng thái chung mà không lộ khóa bảo mật.</p>
+        <div class="diagram-box">
+          <pre class="mermaid">
+flowchart LR
+    subgraph Connectors["Đa Kênh Kết nối Tác tử"]
+        M["MSW Agent\n(MCP / HTTP)"]
+        I["IDE Agents\nVS Code · Cursor · Zed\n(MCP & ACP v1)"]
+        K["Cloud / Local LLMs\nOpenAI · Anthropic · Gemini · Ollama\n(API Key Worker)"]
+        C["CLI Coding Agents\nOpenCode · Aider\n(Managed PTY)"]
+        R["External Agents\nLangGraph · CrewAI\n(A2A AgentCard)"]
+    end
+
+    subgraph CoreHub["Factory Arena Local-First Hub"]
+        G["Unified Protocol Gateway"]
+        V["Credential Vault\n(AES-256-GCM)"]
+        D["Deliberation Engine\n(Council · Adversarial · Roundtable)"]
+        B["Shared Blackboard\n& Context Slicer"]
+        W["Workspace Isolation\n(Git Worktree + File Lease)"]
+        S[("SQLite WAL +\nJSONL Ledger")]
+    end
+
+    M <--> G
+    I <--> G
+    K <--> G
+    C <--> G
+    R <--> G
+    G -.-> V
+    G --> D
+    D <--> B
+    D --> W
+    D --> S
+          </pre>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>⚖️ Sơ đồ 2: Chu trình Hội đồng Phản biện Ẩn danh & Thực thi Cô lập</h2>
+        <p class="subtitle">Sơ đồ này cho thấy cách một đề bài đi từ phát biểu độc lập, chấm chéo ẩn danh, tổng hợp có lưu vết ý kiến thiểu số cho tới thực thi không xung đột.</p>
+        <div class="diagram-box">
+          <pre class="mermaid">
+flowchart LR
+    S1["1. Blind Divergence\n(Đề xuất độc lập - Khóa chéo)"] --> S2["2. Anon Cross-Critique\n(Chấm Rubric Proposal A/B/C)"]
+    S2 --> S3["3. Weighted Voting\n& Tie-Breaking"]
+    S3 --> S4["4. Synthesis\nDecisionRecord + DissentLog"]
+    S4 --> HG{"Human Gate\nPhê duyệt?"}
+    HG -- "Bơm chỉ dẫn (Steer)" --> S2
+    HG -- "Duyệt thực thi" --> EX["5. Execution Mesh\nGit Worktrees + Ralph Retry"]
+          </pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 4: CONTRACTS & DATA MODEL -->
+    <section id="contracts" class="section">
+      <div class="grid-2">
+        <div class="card">
+          <h2>🔌 Bộ Công cụ MCP Xuất bản cho IDE & MSW Agent</h2>
+          <p class="subtitle">Định nghĩa chi tiết tại <code>specs/001-multi-agent-arena/contracts/mcp-arena-tools.json</code></p>
+          <table>
+            <thead><tr><th>Tên Tool MCP</th><th>Chức năng chính</th></tr></thead>
+            <tbody>
+              <tr><td><code>arena_join_room</code></td><td>Đăng ký phiên IDE/MSW Agent vào phòng kèm vai trò & quyền hạn</td></tr>
+              <tr><td><code>arena_poll_assignment</code></td><td>Nhận nhiệm vụ vòng hiện tại (tự động che bài Agent khác ở vòng 1)</td></tr>
+              <tr><td><code>arena_submit_proposal</code></td><td>Nộp phương án giải quyết độc lập kèm trích dẫn <code>file:line</code></td></tr>
+              <tr><td><code>arena_submit_critique</code></td><td>Chấm điểm Rubric 4 trục & báo lỗi có dẫn chứng cho <code>Proposal A..N</code></td></tr>
+              <tr><td><code>arena_cast_vote</code></td><td>Bỏ phiếu xếp hạng ưu tiên (Ranked-Choice) kèm mức độ tự tin</td></tr>
+              <tr><td><code>arena_publish_decision</code></td><td>Tổng hợp <code>DecisionRecord</code> + <code>DissentLog</code></td></tr>
+              <tr><td><code>arena_publish_artifact</code></td><td>Đẩy bản diff/log lớn lên Blackboard nhận mã <code>artifact://</code></td></tr>
+              <tr><td><code>arena_claim_bead</code></td><td>Nhận đầu việc code và cấp phát <code>Git Worktree</code> / <code>File Lease</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="card">
+          <h2>🗄️ Các Thực thể Bền vững Cốt lõi (SQLite WAL)</h2>
+          <p class="subtitle">Định nghĩa chi tiết tại <code>specs/001-multi-agent-arena/data-model.md</code></p>
+          <table>
+            <thead><tr><th>Thực thể</th><th>Vai trò & Ràng buộc Bảo vệ</th></tr></thead>
+            <tbody>
+              <tr><td><code>CredentialProfile</code></td><td>Mã hóa khóa bằng <code>AES-256-GCM</code>, trường <code>writeOnly</code>, cấm xuất ra log</td></tr>
+              <tr><td><code>Participant</code></td><td>Chuẩn hóa 5 loại transport, theo dõi heartbeat 10s & <code>AgentCard</code></td></tr>
+              <tr><td><code>Room</code></td><td>Lưu cấu hình chế độ phản biện, trần ngân sách token & trạng thái phiên</td></tr>
+              <tr><td><code>TurnSubmission</code></td><td>Ánh xạ ẩn danh ngẫu nhiên <code>Proposal A..N</code>, khóa <code>sealed</code> ở vòng 1</td></tr>
+              <tr><td><code>Critique</code> & <code>Vote</code></td><td>Điểm Rubric 4 tiêu chí, bắt buộc dẫn chứng với lỗi mức <code>high/critical</code></td></tr>
+              <tr><td><code>DecisionRecord</code></td><td>Lưu phương án thắng, cải tiến tiếp thu và danh sách bảo lưu <code>DissentLog</code></td></tr>
+              <tr><td><code>TaskBead</code> & <code>WorkspaceLease</code></td><td>Chống ghi đè nhánh chính bằng Git Worktree hoặc khóa glob tệp có TTL</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 5: ROADMAP & SIGN-OFF -->
+    <section id="signoff" class="section">
+      <div class="card" style="margin-bottom: 22px;">
+        <h2>🚀 Lộ trình 4 Giai đoạn Triển khai (Implementation Milestones)</h2>
+        <table>
+          <thead><tr><th>Giai đoạn</th><th>Hạng mục Bàn giao</th><th>Tiêu chí Nghiệm thu</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><strong>Milestone 1</strong><br/>Core Engine & Vault</td>
+              <td><code>packages/protocol</code>, <code>packages/core</code> (SQLite WAL, JSONL Ledger, AES-256-GCM Vault, Council State Machine) + <code>APIKeyAdapter</code> + CLI cơ bản.</td>
+              <td>Chạy thành công phiên Hội đồng 3 model qua CLI; 0% lộ secret; khóa kín vòng 1 (<code>SC-002</code>, <code>SC-005</code>).</td>
+            </tr>
+            <tr>
+              <td><strong>Milestone 2</strong><br/>MCP & ACP IDE Bridge</td>
+              <td><code>mcp-arena-server</code> (Streamable HTTP + stdio) & <code>acp-bridge</code> kết nối trực tiếp MSW Agent, VS Code, Cursor, Zed.</td>
+              <td>Kết nối &ge; 3 Agent đa phương thức vào chung phòng trong &lt; 3 phút (<code>SC-001</code>).</td>
+            </tr>
+            <tr>
+              <td><strong>Milestone 3</strong><br/>Execution Mesh & Worktrees</td>
+              <td><code>GitWorktreeManager</code>, <code>FileLeaseRegistry</code>, <code>ContextSlicer</code> (&ge; 50% giảm token) và cơ chế <code>Ralph-Style Clean Retry</code>.</td>
+              <td>2–5 Agent sửa code song song trên cùng repo với 0% xung đột hỏng nhánh gốc (<code>SC-003</code>, <code>SC-004</code>).</td>
+            </tr>
+            <tr>
+              <td><strong>Milestone 4</strong><br/>Web Arena UI & A2A</td>
+              <td>Giao diện trực quan <code>apps/web-arena</code> (Council Board, Critique Matrix, Human Gate) + liên thông <code>/.well-known/agent.json</code>.</td>
+              <td>Trải nghiệm giám sát trực tiếp, bơm chỉ dẫn <code>Steer</code> giữa vòng và ký duyệt Human Gate.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2>✅ Cổng Ký duyệt Kế hoạch Kiến trúc (Architecture Plan Sign-off)</h2>
+        <div class="check-row">
+          <input type="checkbox" id="chk1" checked />
+          <label for="chk1">Đồng ý kiến trúc kết nối đa phương thức (API Key + MCP Server cho IDE/MSW Agent + ACP + CLI PTY + A2A).</label>
+        </div>
+        <div class="check-row">
+          <input type="checkbox" id="chk2" checked />
+          <label for="chk2">Đồng ý quy trình Hội đồng Phản biện 4 bước (Cô lập vòng 1, Ẩn danh vòng 2, Biểu quyết có trọng số, Lưu vết ý kiến bảo lưu).</label>
+        </div>
+        <div class="check-row">
+          <input type="checkbox" id="chk3" checked />
+          <label for="chk3">Đồng ý cơ chế cô lập không gian làm việc bằng Git Worktree & File Lease trước khi sinh danh sách công việc (<code>/speckit-tasks</code>).</label>
+        </div>
+        <div class="signoff-box">
+          <input type="text" id="approver" placeholder="Nhập tên người phê duyệt..." />
+          <button class="btn-approve" onclick="approvePlan()">Xác nhận Duyệt Kế hoạch</button>
+          <span id="signoff-status"></span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose' });
+
+    function openTab(id, btn) {
+      document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.getElementById(id).classList.add('active');
+      btn.classList.add('active');
+    }
+
+    function approvePlan() {
+      const name = document.getElementById('approver').value.trim() || 'Director';
+      const now = new Date().toISOString().slice(0, 16).replace('T', ' ');
+      document.getElementById('signoff-status').textContent = `✓ Đã ký duyệt bởi ${name} lúc ${now} — Sẵn sàng chạy /speckit-tasks`;
+    }
+
+    /* ==================== 3D VIRTUAL OFFICE + KANBAN ENGINE ==================== */
+    const employees = [
+      {
+        id: 'MSW-01', name: 'MSW Lead', role: 'Tech Lead / Moderator', transport: 'MCP Bridge (MSW)',
+        color: 0x38f2c8, deskPos: { x: -6.5, z: -3.2 }, meetPos: { x: 4.5, z: -2.8 },
+        pose: 'typing_code', contextPct: 28, cost: 0.14, branch: 'wt/TSK-101-gateway',
+        lastTool: 'editing packages/core/engine/council.ts', permissionPrompt: null
+      },
+      {
+        id: 'VSC-FE-02', name: 'VSCode #1 (UI)', role: 'Frontend 3D Engineer', transport: 'IDE · ACP/MCP',
+        color: 0x60a5fa, deskPos: { x: -2.5, z: -3.2 }, meetPos: { x: 6.7, z: -1.2 },
+        pose: 'typing_code', contextPct: 34, cost: 0.09, branch: 'wt/TSK-102-office3d',
+        lastTool: 'running vitest scene3d.spec.ts', permissionPrompt: null
+      },
+      {
+        id: 'CUR-BE-03', name: 'Cursor #2 (DB)', role: 'Backend & Storage', transport: 'IDE · MCP Session #2',
+        color: 0xa78bfa, deskPos: { x: -6.5, z: 1.4 }, meetPos: { x: 6.2, z: 1.5 },
+        pose: 'hand_raised', contextPct: 41, cost: 0.11, branch: 'wt/TSK-103-sqlite-wal',
+        lastTool: 'paused: waiting permission for migration',
+        permissionPrompt: 'Xin quyền chạy: pnpm db:migrate trên worktree wt/TSK-103-sqlite-wal'
+      },
+      {
+        id: 'API-SEC-04', name: 'SecCritic API', role: 'Red-Team Security', transport: 'API Key (Vault AES)',
+        color: 0xfb7185, deskPos: { x: -2.5, z: 1.4 }, meetPos: { x: 2.8, z: 1.5 },
+        pose: 'reading_files', contextPct: 19, cost: 0.08, branch: 'read-only-audit',
+        lastTool: 'auditing credential-vault.ts:14-88', permissionPrompt: null
+      },
+      {
+        id: 'CLI-QA-05', name: 'OpenCode CLI', role: 'QA & Worktree Runner', transport: 'Local CLI / PTY',
+        color: 0xfbbf24, deskPos: { x: -4.5, z: 4.6 }, meetPos: { x: 2.3, z: -1.2 },
+        pose: 'running_tests', contextPct: 22, cost: 0.06, branch: 'wt/TSK-104-e2e',
+        lastTool: 'verifying sealed round-1 isolation', permissionPrompt: null
+      }
+    ];
+
+    const tickets = [
+      { id: 'TSK-101', title: 'Xây dựng Council State Machine 4 bước', col: 'in_progress', assignee: 'MSW-01' },
+      { id: 'TSK-102', title: 'Đồng bộ 3D Avatar với MCP Heartbeat', col: 'in_progress', assignee: 'VSC-FE-02' },
+      { id: 'TSK-103', title: 'Thiết kế SQLite WAL & FileLease Lock', col: 'blocked', assignee: 'CUR-BE-03' },
+      { id: 'TSK-104', title: 'Kiểm toán AES-256-GCM Credential Vault', col: 'in_war_room', assignee: 'API-SEC-04' },
+      { id: 'TSK-105', title: 'Tích hợp /.well-known/agent.json (A2A)', col: 'backlog', assignee: 'CLI-QA-05' },
+      { id: 'TSK-106', title: 'Nén ngữ cảnh Blackboard (>50% token)', col: 'done', assignee: 'MSW-01' }
+    ];
+
+    let selectedEmpId = 'CUR-BE-03';
+    let inWarRoom = false;
+    const feedLogs = [
+      '[15:10] MSW-01 (MCP) đã điểm danh nhận bàn DESK-A1 (nhánh wt/TSK-101-gateway).',
+      '[15:11] VSC-FE-02 & CUR-BE-03 kết nối từ 2 cửa sổ IDE độc lập -> tách thành 2 nhân viên riêng.',
+      '[15:12] ✋ CUR-BE-03 giơ tay xin quyền chạy migration ngay tại bàn — bấm vào nhân viên để Allow!'
+    ];
+
+    function addLog(msg) {
+      feedLogs.unshift(msg);
+      const box = document.getElementById('debate-feed');
+      box.innerHTML = feedLogs.slice(0, 12).map(l => `<div class="feed-item">${l}</div>`).join('');
+    }
+
+    function renderInspector() {
+      const emp = employees.find(e => e.id === selectedEmpId) || employees[0];
+      const assigned = tickets.filter(t => t.assignee === emp.id).map(t => t.id).join(', ') || 'Chưa gán';
+      const ctxColor = emp.contextPct > 40 ? 'var(--warn)' : 'var(--accent)';
+      let permHtml = '';
+      if (emp.permissionPrompt) {
+        permHtml = `
+          <div style="margin-top:10px;padding:10px;border-radius:8px;background:rgba(251,191,36,0.14);border:1px solid var(--warn);">
+            <div style="font-weight:700;color:var(--warn);margin-bottom:4px;">✋ Đang chờ Giám đốc duyệt quyền:</div>
+            <div style="font-size:0.8rem;margin-bottom:8px;">${emp.permissionPrompt}</div>
+            <button class="btn btn-primary" onclick="resolvePermission('${emp.id}', true)">✓ Allow ngay tại bàn</button>
+            <button class="btn" onclick="resolvePermission('${emp.id}', false)" style="margin-left:6px;">✕ Deny</button>
+          </div>`;
+      }
+      document.getElementById('inspector-body').innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div><strong>${emp.name}</strong> <code>${emp.id}</code></div>
+          <span class="badge">${emp.transport}</span>
+        </div>
+        <div class="subtitle" style="margin:4px 0 8px;">Chức danh: ${emp.role} · Nhánh cô lập: <code>${emp.branch}</code></div>
+        <div style="font-size:0.8rem;">Task đang phụ trách: <strong>${assigned}</strong></div>
+        <div style="font-size:0.8rem;margin-top:4px;">Hoạt động thật: <code>${emp.lastTool}</code></div>
+        <div style="font-size:0.78rem;margin-top:8px;display:flex;justify-content:space-between;">
+          <span>Context Fill (Ngưỡng sạch &lt;40%): <strong>${emp.contextPct}%</strong></span>
+          <span>Chi phí Session: <strong>$${emp.cost.toFixed(2)}</strong></span>
+        </div>
+        <div class="meter-bar"><div class="meter-fill" style="width:${emp.contextPct}%;background:${ctxColor};"></div></div>
+        ${permHtml}
+      `;
+      const totalCost = employees.reduce((s, e) => s + e.cost, 0);
+      document.getElementById('payroll-summary').textContent =
+        `Active Sessions: ${employees.length} Nhân viên · Tổng chi phí ca: $${totalCost.toFixed(2)}`;
+    }
+
+    function renderKanban() {
+      const cols = [
+        { key: 'backlog', label: '📥 Backlog' },
+        { key: 'in_progress', label: '💻 Đang làm tại Bàn' },
+        { key: 'in_war_room', label: '⚖️ Họp Phản biện / Gate' },
+        { key: 'done', label: '✅ Hoàn thành' }
+      ];
+      const board = document.getElementById('kanban-board');
+      board.innerHTML = cols.map(c => {
+        const list = tickets.filter(t => (c.key === 'in_war_room' ? (t.col === 'in_war_room' || t.col === 'blocked') : t.col === c.key));
+        return `
+          <div class="kanban-col">
+            <div class="kanban-col-header"><span>${c.label}</span><span>${list.length}</span></div>
+            ${list.map(t => `
+              <div class="ticket-card">
+                <div style="display:flex;justify-content:space-between;">
+                  <span class="t-id">${t.id}</span>
+                  ${t.col === 'blocked' ? '<span style="color:var(--warn);font-size:0.72rem;">✋ Chờ quyền</span>' : ''}
+                </div>
+                <div class="t-title">${t.title}</div>
+                <select onchange="assignTicket('${t.id}', this.value)">
+                  ${employees.map(e => `<option value="${e.id}" ${e.id === t.assignee ? 'selected' : ''}>👤 ${e.name} (${e.id})</option>`).join('')}
+                </select>
+              </div>
+            `).join('')}
+          </div>`;
+      }).join('');
+    }
+
+    window.assignTicket = function(ticketId, empId) {
+      const t = tickets.find(x => x.id === ticketId);
+      const emp = employees.find(x => x.id === empId);
+      if (t && emp) {
+        t.assignee = empId;
+        if (t.col === 'backlog') t.col = 'in_progress';
+        emp.pose = 'typing_code';
+        emp.lastTool = `working on ${t.id} in isolated git worktree`;
+        selectedEmpId = empId;
+        addLog(`📋 Đã giao ${t.id} cho nhân viên ${emp.name} (${emp.id}) trên nhánh worktree riêng.`);
+        renderKanban();
+        renderInspector();
+      }
+    };
+
+    window.resolvePermission = function(empId, allow) {
+      const emp = employees.find(x => x.id === empId);
+      if (!emp) return;
+      emp.permissionPrompt = null;
+      emp.pose = allow ? 'typing_code' : 'idle';
+      emp.lastTool = allow ? 'migration approved -> executing SQLite WAL schema' : 'command denied by Director -> revising plan';
+      tickets.forEach(t => { if (t.assignee === empId && t.col === 'blocked') t.col = 'in_progress'; });
+      addLog(allow
+        ? `✅ Giám đốc đã bấm Allow tại bàn cho ${emp.name} — nhân viên tiếp tục chạy task!`
+        : `🛑 Giám đốc từ chối lệnh của ${emp.name} — yêu cầu đề xuất phương án an toàn hơn.`);
+      renderKanban();
+      renderInspector();
+    };
+
+    /* THREE.JS 3D SCENE */
+    let scene, camera, renderer, avatarMeshes = [];
+    function init3DOffice() {
+      const canvas = document.getElementById('office-canvas');
+      const wrap = document.getElementById('viewport-wrap');
+      if (!window.THREE || !canvas) return;
+
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x070d1b);
+      scene.fog = new THREE.Fog(0x070d1b, 22, 46);
+
+      camera = new THREE.PerspectiveCamera(42, wrap.clientWidth / 500, 0.1, 100);
+      renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+      renderer.setSize(wrap.clientWidth, 500);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+      scene.add(new THREE.AmbientLight(0x9bb8ff, 0.85));
+      const dirLight = new THREE.DirectionalLight(0xffffff, 1.1);
+      dirLight.position.set(10, 18, 12);
+      scene.add(dirLight);
+
+      // Office Floor + Grid
+      const floor = new THREE.Mesh(
+        new THREE.BoxGeometry(20, 0.3, 14),
+        new THREE.MeshStandardMaterial({ color: 0x10192e, roughness: 0.85 })
+      );
+      floor.position.y = -0.15;
+      scene.add(floor);
+      const grid = new THREE.GridHelper(20, 20, 0x263863, 0x182544);
+      grid.position.y = 0.01;
+      scene.add(grid);
+
+      // Glass War Room Zone (Right side)
+      const roomFloor = new THREE.Mesh(
+        new THREE.BoxGeometry(7.2, 0.06, 8.2),
+        new THREE.MeshStandardMaterial({ color: 0x13293d, roughness: 0.5 })
+      );
+      roomFloor.position.set(4.6, 0.03, 0);
+      scene.add(roomFloor);
+
+      const glassMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.16 });
+      const glassWall1 = new THREE.Mesh(new THREE.BoxGeometry(0.12, 2.5, 8.2), glassMat);
+      glassWall1.position.set(1.0, 1.25, 0);
+      scene.add(glassWall1);
+
+      // Conference Table
+      const confTable = new THREE.Mesh(
+        new THREE.CylinderGeometry(1.75, 1.75, 0.18, 28),
+        new THREE.MeshStandardMaterial({ color: 0x1e3a5f, metalness: 0.3, roughness: 0.4 })
+      );
+      confTable.position.set(4.6, 0.82, 0);
+      scene.add(confTable);
+
+      // Director Desk (Top Center)
+      const bossDesk = new THREE.Mesh(
+        new THREE.BoxGeometry(2.6, 0.78, 1.1),
+        new THREE.MeshStandardMaterial({ color: 0x3b2f1e })
+      );
+      bossDesk.position.set(-0.6, 0.39, -5.4);
+      scene.add(bossDesk);
+
+      employees.forEach(emp => buildDeskAndAvatar(emp));
+
+      // Orbit drag controls
+      let isDragging = false, prevX = 0, prevY = 0, theta = 0.52, phi = 0.88, radius = 19.5;
+      function updateCam() {
+        camera.position.x = radius * Math.sin(phi) * Math.sin(theta);
+        camera.position.y = radius * Math.cos(phi);
+        camera.position.z = radius * Math.sin(phi) * Math.cos(theta);
+        camera.lookAt(-0.5, 0.6, 0);
+      }
+      updateCam();
+
+      canvas.addEventListener('pointerdown', e => { isDragging = true; prevX = e.clientX; prevY = e.clientY; });
+      window.addEventListener('pointerup', () => { isDragging = false; });
+      window.addEventListener('pointermove', e => {
+        if (!isDragging) return;
+        theta -= (e.clientX - prevX) * 0.007;
+        phi = Math.max(0.38, Math.min(1.32, phi - (e.clientY - prevY) * 0.006));
+        prevX = e.clientX; prevY = e.clientY;
+        updateCam();
+      });
+      canvas.addEventListener('wheel', e => {
+        e.preventDefault();
+        radius = Math.max(11, Math.min(28, radius + e.deltaY * 0.01));
+        updateCam();
+      }, { passive: false });
+
+      window.addEventListener('resize', () => {
+        if (!wrap.clientWidth) return;
+        camera.aspect = wrap.clientWidth / 500;
+        camera.updateProjectionMatrix();
+        renderer.setSize(wrap.clientWidth, 500);
+      });
+
+      const clock = new THREE.Clock();
+      function animate() {
+        requestAnimationFrame(animate);
+        const t = clock.getElapsedTime();
+        avatarMeshes.forEach((item, idx) => {
+          const emp = item.emp;
+          const target = inWarRoom ? emp.meetPos : emp.deskPos;
+          item.group.position.x += (target.x - item.group.position.x) * 0.055;
+          item.group.position.z += (target.z - item.group.position.z) * 0.055;
+
+          const dx = target.x - item.group.position.x;
+          const dz = target.z - item.group.position.z;
+          const dist = Math.hypot(dx, dz);
+
+          if (dist > 0.12) {
+            item.group.position.y = Math.abs(Math.sin(t * 9 + idx)) * 0.18;
+            item.group.rotation.y = Math.atan2(dx, dz);
+          } else {
+            item.group.position.y = 0;
+            item.group.rotation.y = inWarRoom ? Math.atan2(4.6 - target.x, 0 - target.z) : 0;
+          }
+
+          // Right arm animation: raised hand vs typing
+          if (emp.permissionPrompt) {
+            item.rightArm.position.y = 1.42 + Math.sin(t * 6) * 0.08;
+            item.beacon.visible = true;
+            item.beacon.material.color.setHex(0xfbbf24);
+          } else {
+            item.rightArm.position.y = 0.88 + (emp.pose === 'typing_code' ? Math.sin(t * 14 + idx) * 0.06 : 0);
+            item.beacon.visible = inWarRoom;
+            if (inWarRoom) item.beacon.material.color.setHex(0x38f2c8);
+          }
+
+          // Monitor glow
+          item.screen.material.emissiveIntensity = emp.permissionPrompt ? 0.9 : (0.45 + Math.sin(t * 4 + idx) * 0.2);
+          updateLabelPosition(item);
+        });
+        renderer.render(scene, camera);
+      }
+      animate();
+    }
+
+    function buildDeskAndAvatar(emp) {
+      if (!scene) return;
+      // Desk
+      const desk = new THREE.Mesh(
+        new THREE.BoxGeometry(2.1, 0.72, 1.05),
+        new THREE.MeshStandardMaterial({ color: 0x1f2b49 })
+      );
+      desk.position.set(emp.deskPos.x, 0.36, emp.deskPos.z - 0.65);
+      scene.add(desk);
+
+      const screenMat = new THREE.MeshStandardMaterial({
+        color: emp.color, emissive: emp.color, emissiveIntensity: 0.5
+      });
+      const screen = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.48, 0.07), screenMat);
+      screen.position.set(emp.deskPos.x, 0.98, emp.deskPos.z - 0.82);
+      scene.add(screen);
+
+      // Character Avatar Group
+      const group = new THREE.Group();
+      group.position.set(emp.deskPos.x, 0, emp.deskPos.z);
+
+      const body = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.32, 0.36, 0.85, 16),
+        new THREE.MeshStandardMaterial({ color: emp.color })
+      );
+      body.position.y = 0.65;
+      group.add(body);
+
+      const head = new THREE.Mesh(
+        new THREE.SphereGeometry(0.28, 18, 18),
+        new THREE.MeshStandardMaterial({ color: 0xfde68a })
+      );
+      head.position.y = 1.32;
+      group.add(head);
+
+      const rightArm = new THREE.Mesh(
+        new THREE.BoxGeometry(0.14, 0.45, 0.14),
+        new THREE.MeshStandardMaterial({ color: emp.color })
+      );
+      rightArm.position.set(0.4, 0.88, -0.1);
+      group.add(rightArm);
+
+      const beacon = new THREE.Mesh(
+        new THREE.OctahedronGeometry(0.16),
+        new THREE.MeshBasicMaterial({ color: 0xfbbf24 })
+      );
+      beacon.position.y = 1.92;
+      beacon.visible = false;
+      group.add(beacon);
+
+      scene.add(group);
+
+      // HTML Floating Badge
+      const tag = document.createElement('div');
+      tag.className = 'emp-tag';
+      tag.onclick = () => { selectedEmpId = emp.id; renderInspector(); };
+      document.getElementById('labels-layer').appendChild(tag);
+
+      avatarMeshes.push({ emp, group, rightArm, beacon, screen, tag });
+    }
+
+    function updateLabelPosition(item) {
+      const wrap = document.getElementById('viewport-wrap');
+      const v = new THREE.Vector3(item.group.position.x, item.group.position.y + 2.15, item.group.position.z);
+      v.project(camera);
+      const x = (v.x * 0.5 + 0.5) * wrap.clientWidth;
+      const y = (-v.y * 0.5 + 0.5) * 500;
+      item.tag.style.left = `${x}px`;
+      item.tag.style.top = `${y}px`;
+      const statusIcon = item.emp.permissionPrompt ? '✋ Cần duyệt' : (inWarRoom ? '⚖️ Đang phản biện' : '💻 Đang làm');
+      item.tag.className = 'emp-tag' +
+        (item.emp.id === selectedEmpId ? ' selected' : '') +
+        (item.emp.permissionPrompt ? ' hand-raised' : '');
+      item.tag.innerHTML = `<strong>${item.emp.name}</strong> <span style="color:var(--muted)">(${statusIcon})</span>`;
+    }
+
+    window.summonWarRoom = function() {
+      inWarRoom = true;
+      document.getElementById('office-mode-label').textContent =
+        '⚖️ PHÒNG HỌP KÍNH: Các nhân viên đã rời bàn vào họp Hội đồng Phản biện Ẩn danh (Sealed Round 1 -> Critique Proposal A/B/C)';
+      addLog('🏛️ Triệu tập Họp Phản biện: Tất cả nhân viên rời bàn đi bộ vào Phòng Họp Kính 3D!');
+      addLog('🔒 Vòng 1 (Blind Divergence): Khóa chéo ngữ cảnh — mỗi nhân viên nộp đề xuất độc lập.');
+      setTimeout(() => {
+        if (inWarRoom) addLog('🎭 Vòng 2 (Anon Critique): Trộn ngẫu nhiên thành Proposal A..E để chấm điểm Rubric kèm dẫn chứng file:line.');
+      }, 1400);
+    };
+
+    window.returnToDesks = function() {
+      inWarRoom = false;
+      document.getElementById('office-mode-label').textContent =
+        '💻 ĐÃ CHỐT BIÊN BẢN (DecisionRecord): Nhân viên trở về bàn cá nhân thực thi trên Git Worktree cô lập';
+      addLog('✅ Đã xuất DecisionRecord + DissentLog -> Các nhân viên quay về bàn thực thi Task Beads!');
+    };
+
+    window.triggerHandRaise = function() {
+      const target = employees[1];
+      target.permissionPrompt = 'Xin quyền chạy E2E Playwright mở cổng local 4747';
+      target.pose = 'hand_raised';
+      selectedEmpId = target.id;
+      addLog(`✋ ${target.name} (${target.id}) vừa giơ tay tại bàn xin quyền từ Giám đốc!`);
+      renderInspector();
+    };
+
+    window.spawnNewSession = function() {
+      const idx = employees.length + 1;
+      const newEmp = {
+        id: `ZED-AI-0${idx}`,
+        name: `Zed Session #${idx}`,
+        role: 'Performance Specialist',
+        transport: 'IDE · ACP v1',
+        color: 0x22d3ee,
+        deskPos: { x: -0.2 - ((idx % 2) * 2.2), z: 4.6 },
+        meetPos: { x: 4.6, z: 2.3 },
+        pose: 'typing_code',
+        contextPct: 12,
+        cost: 0.02,
+        branch: `wt/TSK-10${idx}-perf`,
+        lastTool: 'connected via ACP v1 -> benchmarking EventBus',
+        permissionPrompt: null
+      };
+      employees.push(newEmp);
+      buildDeskAndAvatar(newEmp);
+      selectedEmpId = newEmp.id;
+      addLog(`➕ Mở phiên mới ${newEmp.name} -> Tự động cấp bàn riêng và nhân viên 3D (${newEmp.id})!`);
+      renderKanban();
+      renderInspector();
+    };
+
+    addLog('🚀 Văn phòng 3D đã khởi tạo — nhấp vào bất kỳ nhân viên nào hoặc bấm "Triệu tập Họp Phản biện".');
+    renderKanban();
+    renderInspector();
+    init3DOffice();
+  </script>
+</body>
+</html>

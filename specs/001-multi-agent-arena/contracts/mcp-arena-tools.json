@@ -1,0 +1,212 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FactoryArenaMCPToolsManifest",
+  "description": "Danh mục công cụ MCP do Factory Hub xuất bản để MSW Agent, VS Code, Cursor, Zed, JetBrains và CLI Agents kết nối trực tiếp vào phòng phản biện & phối hợp.",
+  "version": "1.0.0",
+  "transport": ["streamable-http", "sse", "stdio-proxy"],
+  "tools": [
+    {
+      "name": "arena_checkin_desk",
+      "description": "Điểm danh một phiên AI đang chạy (Active Session) thành một Nhân viên 3D (SessionEmployee) tại bàn làm việc tương ứng, hỗ trợ khôi phục đúng bàn khi IDE reload qua session_fingerprint.",
+      "inputSchema": {
+        "type": "object",
+        "required": ["session_fingerprint", "employee_code", "department", "job_title"],
+        "properties": {
+          "session_fingerprint": { "type": "string" },
+          "employee_code": { "type": "string", "pattern": "^[A-Z0-9-]+$" },
+          "display_name": { "type": "string" },
+          "department": { "type": "string", "enum": ["leadership", "architecture", "backend", "frontend", "security_qa", "devops"] },
+          "job_title": { "type": "string" },
+          "workspace_uri": { "type": "string" }
+        }
+      }
+    },
+    {
+      "name": "arena_report_desk_activity",
+      "description": "Đồng bộ trạng thái thật của phiên AI lên nhân vật 3D tại bàn (gõ code, đọc file, chạy test, độ đầy bộ nhớ context_fill_pct, hoặc ✋ giơ tay xin quyền).",
+      "inputSchema": {
+        "type": "object",
+        "required": ["employee_id", "avatar_pose"],
+        "properties": {
+          "employee_id": { "type": "string" },
+          "avatar_pose": { "type": "string", "enum": ["idle", "typing_code", "reading_files", "running_tests", "speaking", "hand_raised"] },
+          "last_tool_call_summary": { "type": "string" },
+          "context_fill_pct": { "type": "number", "minimum": 0, "maximum": 100 },
+          "permission_prompt": { "type": "string", "description": "Nội dung xin quyền cần Giám đốc bấm Allow/Deny ngay trong Văn phòng 3D" }
+        }
+      }
+    },
+    {
+      "name": "arena_join_room",
+      "description": "Đăng ký phiên IDE/Agent hiện tại vào một phòng hợp tác đang mở và nhận lát cắt ngữ cảnh (Context Slice) ban đầu.",
+      "inputSchema": {
+        "type": "object",
+        "required": ["room_id", "slug", "persona_role", "capabilities"],
+        "properties": {
+          "room_id": { "type": "string" },
+          "slug": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+          "display_name": { "type": "string" },
+          "persona_role": { "type": "string", "description": "Góc nhìn chuyên môn (VD: Architecture Lead, Security Critic, Frontend IDE Agent)" },
+          "capabilities": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["propose", "critique", "vote", "read_repo", "edit_worktree", "run_tests", "moderate"] }
+          }
+        }
+      }
+    },
+    {
+      "name": "arena_poll_assignment",
+      "description": "Nhận nhiệm vụ tiếp theo trong phòng (đề bài vòng 1, danh sách Proposal ẩn danh cần chấm ở vòng 2, yêu cầu biểu quyết hoặc Task Bead cần code). Chặn hoàn toàn dữ liệu của Agent khác khi vòng 1 đang ở trạng thái SEALED.",
+      "inputSchema": {
+        "type": "object",
+        "required": ["room_id", "participant_id"],
+        "properties": {
+          "room_id": { "type": "string" },
+          "participant_id": { "type": "string" },
+          "wait_timeout_ms": { "type": "integer", "default": 25000, "maximum": 60000 }
+        }
+      }
+    },
+    {
+      "name": "arena_submit_proposal",
+      "description": "Nộp phương án giải quyết độc lập ở Vòng Divergence hoặc bản cập nhật ở Vòng Rebuttal kèm trích dẫn file:line.",
+      "inputSchema": {
+        "type": "object",
+        "required": ["room_id", "round_id", "participant_id", "summary", "content_markdown"],
+        "properties": {
+          "room_id": { "type": "string" },
+          "round_id": { "type": "string" },
+          "participant_id": { "type": "string" },
+          "summary": { "type": "string", "maxLength": 1500 },
+          "content_markdown": { "type": "string" },
+          "citations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["path"],
+              "properties": {
+                "path": { "type": "string" },
+                "line_start": { "type": "integer" },
+                "line_end": { "type": "integer" },
+                "artifact_id": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "arena_submit_critique",
+      "description": "Nộp bản phản biện chéo và chấm điểm theo Rubric đối với một Proposal ẩn danh (Proposal A/B/C...).",
+      "inputSchema": {
+        "type": "object",
+        "required": ["room_id", "round_id", "reviewer_id", "target_anonymous_alias", "rubric_scores", "findings"],
+        "properties": {
+          "room_id": { "type": "string" },
+          "round_id": { "type": "string" },
+          "reviewer_id": { "type": "string" },
+          "target_anonymous_alias": { "type": "string", "examples": ["Proposal A", "Proposal B"] },
+          "rubric_scores": {
+            "type": "object",
+            "required": ["correctness", "security", "maintainability", "feasibility"],
+            "properties": {
+              "correctness": { "type": "integer", "minimum": 1, "maximum": 10 },
+              "security": { "type": "integer", "minimum": 1, "maximum": 10 },
+              "maintainability": { "type": "integer", "minimum": 1, "maximum": 10 },
+              "feasibility": { "type": "integer", "minimum": 1, "maximum": 10 }
+            }
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["severity", "category", "claim"],
+              "properties": {
+                "severity": { "type": "string", "enum": ["critical", "high", "medium", "low"] },
+                "category": { "type": "string", "enum": ["logic", "security", "performance", "edge_case", "architecture"] },
+                "claim": { "type": "string" },
+                "evidence_ref": { "type": "string", "description": "Bắt buộc dẫn chứng file:line hoặc artifact:// cho mức critical/high" }
+              }
+            }
+          },
+          "strengths_summary": { "type": "string" },
+          "blind_spots_summary": { "type": "string" }
+        }
+      }
+    },
+    {
+      "name": "arena_cast_vote",
+      "description": "Bỏ phiếu xếp hạng thứ tự ưu tiên các Proposal ẩn danh sau khi hoàn tất phản biện chéo.",
+      "inputSchema": {
+        "type": "object",
+        "required": ["room_id", "round_id", "voter_id", "ranked_aliases", "confidence"],
+        "properties": {
+          "room_id": { "type": "string" },
+          "round_id": { "type": "string" },
+          "voter_id": { "type": "string" },
+          "ranked_aliases": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "rationale": { "type": "string" }
+        }
+      }
+    },
+    {
+      "name": "arena_publish_decision",
+      "description": "Dành cho Moderator Agent tổng hợp biên bản quyết định cuối cùng kèm các ý kiến phản biện thiểu số được bảo lưu (DissentLog).",
+      "inputSchema": {
+        "type": "object",
+        "required": ["room_id", "moderator_id", "winning_alias", "final_plan_markdown", "dissent_log"],
+        "properties": {
+          "room_id": { "type": "string" },
+          "moderator_id": { "type": "string" },
+          "winning_alias": { "type": "string" },
+          "final_plan_markdown": { "type": "string" },
+          "adopted_amendments": { "type": "array", "items": { "type": "string" } },
+          "dissent_log": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["issue", "raised_by_alias", "revisit_trigger"],
+              "properties": {
+                "issue": { "type": "string" },
+                "raised_by_alias": { "type": "string" },
+                "revisit_trigger": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "arena_publish_artifact",
+      "description": "Đăng tải hiện vật lớn (bản diff, sơ đồ kiến trúc, kết quả test) lên Shared Blackboard để nhận mã tham chiếu gọn nhẹ artifact://.",
+      "inputSchema": {
+        "type": "object",
+        "required": ["room_id", "author_id", "kind", "title", "content", "compact_digest"],
+        "properties": {
+          "room_id": { "type": "string" },
+          "author_id": { "type": "string" },
+          "kind": { "type": "string", "enum": ["spec", "architecture_diagram", "code_diff", "test_report", "log_excerpt"] },
+          "title": { "type": "string" },
+          "content": { "type": "string" },
+          "compact_digest": { "type": "string", "maxLength": 600 }
+        }
+      }
+    },
+    {
+      "name": "arena_claim_bead",
+      "description": "Nhận một đơn vị công việc (Task Bead) và tự động được cấp nhánh Git Worktree riêng hoặc File Lease không xung đột.",
+      "inputSchema": {
+        "type": "object",
+        "required": ["room_id", "bead_id", "participant_id", "isolation_mode"],
+        "properties": {
+          "room_id": { "type": "string" },
+          "bead_id": { "type": "string" },
+          "participant_id": { "type": "string" },
+          "isolation_mode": { "type": "string", "enum": ["git_worktree", "file_lock"] },
+          "locked_globs": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  ]
+}

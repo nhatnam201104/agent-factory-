@@ -1,0 +1,36 @@
+{
+  "name": "factory-multi-agent-arena",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.9.1",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "tsc -b packages/protocol packages/core packages/adapters packages/cli apps/hub-server apps/vscode-bridge && pnpm --filter @factory-arena/web-arena typecheck",
+    "test": "vitest run",
+    "test:contract": "vitest run tests/contract",
+    "test:integration": "vitest run tests/integration",
+    "test:e2e": "playwright test",
+    "lint": "biome check packages apps tests",
+    "start": "pnpm --filter @factory-arena/cli start"
+  },
+  "devDependencies": {
+    "@factory-arena/adapters": "workspace:*",
+    "@factory-arena/core": "workspace:*",
+    "@factory-arena/hub-server": "workspace:*",
+    "@factory-arena/protocol": "workspace:*",
+    "@biomejs/biome": "^1.9.4",
+    "@playwright/test": "^1.51.0",
+    "@types/node": "^22.13.0",
+    "@types/ws": "^8.18.0",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.7",
+    "yaml": "^2.7.0"
+  }
+}

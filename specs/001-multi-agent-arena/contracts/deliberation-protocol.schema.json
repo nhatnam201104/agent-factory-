@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://factory-arena.local/schemas/deliberation-protocol.schema.json",
+  "title": "DeliberationLedgerEventEnvelope",
+  "description": "Cấu trúc gói tin bất biến trong sổ cái JSONL cho mọi lượt đề xuất, phản biện ẩn danh, bỏ phiếu, tổng hợp và thực thi Bead.",
+  "type": "object",
+  "required": ["event_id", "room_id", "sequence_no", "timestamp", "event_type", "payload"],
+  "properties": {
+    "event_id": { "type": "string", "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$" },
+    "room_id": { "type": "string" },
+    "sequence_no": { "type": "integer", "minimum": 1 },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "actor_session_employee_id": {
+      "type": "string",
+      "description": "Định danh SessionEmployee thực hiện hành động (hoặc 'director' nếu do người dùng thao tác)."
+    },
+    "visibility": {
+      "type": "string",
+      "enum": ["sealed_author_only", "anonymized_peers", "public_room"],
+      "description": "Quyết định mặt nạ lọc dữ liệu trước khi đẩy qua SSE/WebSocket/MCP cho các thành viên khác."
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "employee.checked_in",
+        "employee.pose_changed",
+        "employee.budget_paused",
+        "permission.requested",
+        "permission.resolved",
+        "ticket.created",
+        "ticket.assigned",
+        "ticket.status_changed",
+        "room.created",
+        "participant.joined",
+        "participant.status_changed",
+        "round.started",
+        "proposal.submitted",
+        "round.unsealed_anonymized",
+        "critique.submitted",
+        "vote.cast",
+        "decision.synthesized",
+        "human_gate.requested",
+        "human_gate.resolved",
+        "bead.created",
+        "workspace_lease.acquired",
+        "workspace_lease.conflict_detected",
+        "bead.ralph_retry_triggered",
+        "bead.verified",
+        "artifact.published"
+      ]
+    },
+    "token_accounting": {
+      "type": "object",
+      "properties": {
+        "prompt_tokens": { "type": "integer", "minimum": 0 },
+        "completion_tokens": { "type": "integer", "minimum": 0 },
+        "saved_by_context_slicer_tokens": { "type": "integer", "minimum": 0 },
+        "estimated_cost_usd": { "type": "number", "minimum": 0 }
+      }
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

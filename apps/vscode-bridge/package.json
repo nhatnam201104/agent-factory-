@@ -1,0 +1,28 @@
+{
+  "name": "factory-arena-vscode-bridge",
+  "displayName": "Factory Virtual Office & Arena Bridge",
+  "description": "Auto-registers local Factory Arena MCP/ACP endpoints and shows active SessionEmployee desk & ticket status in VS Code.",
+  "version": "1.0.0",
+  "publisher": "factory-arena",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "type": "module",
+  "main": "./dist/extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "commands": [
+      {
+        "command": "factoryArena.checkinDesk",
+        "title": "Factory Arena: Check-in IDE Session as 3D Employee"
+      },
+      {
+        "command": "factoryArena.openOffice",
+        "title": "Factory Arena: Open 3D Virtual Office"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "tsc -b"
+  }
+}

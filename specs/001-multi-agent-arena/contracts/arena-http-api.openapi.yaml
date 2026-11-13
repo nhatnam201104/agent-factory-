@@ -1,0 +1,352 @@
+openapi: 3.1.0
+info:
+  title: Factory Multi-Agent Arena Hub API
+  version: 1.0.0
+  description: >
+    REST & Server-Sent Events (SSE) API cho nền tảng điều phối, phản biện và hợp tác đa Agent đa phương thức.
+    Song hành cùng endpoint `/mcp` (Streamable HTTP MCP Server) và `/.well-known/agent.json` (A2A).
+servers:
+  - url: http://127.0.0.1:4747
+    description: Local-First Arena Daemon
+
+paths:
+  /.well-known/agent.json:
+    get:
+      summary: Xuất bản A2A Agent Card của Arena Hub
+      operationId: getHubAgentCard
+      responses:
+        "200":
+          description: A2A Agent Card manifest
+          content:
+            application/json:
+              schema:
+                $ref: "./a2a-agent-card.schema.json"
+
+  /api/v1/vault/credentials:
+    post:
+      summary: Lưu trữ khóa API hoặc token kết nối vào Credential Vault (AES-256-GCM)
+      operationId: createCredentialProfile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [label, provider_kind, raw_secret]
+              properties:
+                label: { type: string }
+                provider_kind:
+                  type: string
+                  enum: [openai_compatible, anthropic, gemini, ollama, a2a_bearer, mcp_token]
+                base_url: { type: string, format: uri }
+                raw_secret:
+                  type: string
+                  writeOnly: true
+                  description: Chỉ nhận khi ghi; không bao giờ trả ngược lại trong bất kỳ phản hồi nào.
+                rate_limit_rpm: { type: integer, minimum: 1 }
+                max_cost_usd: { type: number, minimum: 0 }
+      responses:
+        "201":
+          description: Hồ sơ khóa đã lưu thành công (chỉ trả metadata, ẩn secret)
+
+  /api/v1/participants:
+    get:
+      summary: Liệt kê các Nhân viên Phiên AI (SessionEmployee) đang hoạt động và trạng thái không gian 3D
+      operationId: listParticipants
+      responses:
+        "200":
+          description: Danh sách SessionEmployee kèm vị trí bàn 3D, pose, context_fill_pct và chi phí phiên
+    post:
+      summary: Đăng ký hoặc kết nối lại (rebind qua session_fingerprint) một Nhân viên Phiên AI (API Key, IDE MCP/ACP, CLI PTY, Remote A2A)
+      operationId: registerParticipant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [employee_code, display_name, transport_type, department, job_title, capabilities]
+              properties:
+                session_fingerprint: { type: string, description: "Khóa phiên bền vững giúp tự động gắn lại đúng bàn khi IDE reload" }
+                employee_code: { type: string, pattern: "^[A-Z0-9-]+$" }
+                slug: { type: string, pattern: "^[a-z0-9-]+$" }
+                display_name: { type: string }
+                department:
+                  type: string
+                  enum: [leadership, architecture, backend, frontend, security_qa, devops]
+                job_title: { type: string }
+                transport_type:
+                  type: string
+                  enum: [mcp_bridge, acp_editor, api_key, cli_pty, a2a_remote]
+                desk_slot_id: { type: string }
+                system_instructions: { type: string }
+                model_identifier: { type: string }
+                credential_id: { type: string }
+                capabilities:
+                  type: array
+                  items:
+                    type: string
+                    enum: [propose, critique, vote, read_repo, edit_worktree, run_tests, moderate]
+                remote_agent_card_url: { type: string, format: uri }
+                cli_command: { type: array, items: { type: string } }
+      responses:
+        "201":
+          description: Nhân viên Phiên AI đã được cấp bàn làm việc trong Văn phòng 3D
+
+  /api/v1/permissions/{permissionId}/resolve:
+    post:
+      summary: Giám đốc hoặc Trưởng nhóm phê duyệt/từ chối yêu cầu ✋ Giơ tay xin quyền ngay từ Văn phòng 3D
+      operationId: resolvePermissionRequest
+      parameters:
+        - name: permissionId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision:
+                  type: string
+                  enum: [allowed, denied, answered]
+                answer_text: { type: string }
+                resolved_by:
+                  type: string
+                  enum: [director_ui, lead_agent]
+                  default: director_ui
+      responses:
+        "200":
+          description: Đã giải quyết yêu cầu giơ tay và đánh thức phiên AI tiếp tục làm việc
+
+  /api/v1/tickets:
+    get:
+      summary: Liệt kê toàn bộ phiếu việc trên Bảng Kanban (hỗ trợ lọc theo cột, phòng ban, nhân viên phụ trách)
+      operationId: listTickets
+      responses:
+        "200":
+          description: Danh sách TaskTicket trên Bảng Kanban
+    post:
+      summary: Tạo phiếu việc mới trên Bảng Kanban (hỗ trợ liên kết parent_ticket_id cho Goal Ancestry)
+      operationId: createTicket
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, priority]
+              properties:
+                parent_ticket_id: { type: string }
+                title: { type: string }
+                description_markdown: { type: string }
+                acceptance_criteria: { type: array, items: { type: string } }
+                priority:
+                  type: string
+                  enum: [p0_critical, p1_high, p2_normal, p3_low]
+                kanban_column:
+                  type: string
+                  enum: [backlog, assigned, in_progress, in_war_room_debate, in_review, director_gate, done, blocked]
+                  default: backlog
+                assignee_session_id: { type: string }
+                reviewer_session_ids: { type: array, items: { type: string } }
+                repo_root_path: { type: string }
+                base_branch: { type: string }
+      responses:
+        "201":
+          description: Phiếu việc Kanban đã được tạo
+
+  /api/v1/tickets/{ticketId}:
+    patch:
+      summary: Kéo-thả chuyển cột Kanban hoặc giao lại phiếu việc cho một Nhân viên Phiên AI khác
+      operationId: updateTicket
+      parameters:
+        - name: ticketId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                kanban_column:
+                  type: string
+                  enum: [backlog, assigned, in_progress, in_war_room_debate, in_review, director_gate, done, blocked]
+                assignee_session_id: { type: string }
+                reviewer_session_ids: { type: array, items: { type: string } }
+      responses:
+        "200":
+          description: Phiếu việc và màn hình bàn 3D của nhân viên đã được cập nhật
+
+  /api/v1/artifacts:
+    get:
+      summary: Liệt kê các hiện vật trên Tủ Hồ sơ Chung (Shared Blackboard) theo phòng họp hoặc phiếu việc
+      operationId: listArtifacts
+      parameters:
+        - name: roomId
+          in: query
+          required: false
+          schema: { type: string }
+        - name: ticketId
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: Danh sách siêu dữ liệu và compact_digest của BlackboardArtifact
+    post:
+      summary: Đăng tải hiện vật (> 2KB diff, sơ đồ kiến trúc, kết quả test) lên Shared Blackboard nhận mã artifact://
+      operationId: publishArtifact
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [author_session_id, kind, title, content, compact_digest]
+              properties:
+                room_id: { type: string }
+                ticket_id: { type: string }
+                author_session_id: { type: string }
+                kind:
+                  type: string
+                  enum: [spec, architecture_diagram, code_diff, test_report, log_excerpt, decision_record]
+                title: { type: string }
+                content: { type: string }
+                compact_digest: { type: string, maxLength: 600 }
+      responses:
+        "201":
+          description: Đã lưu hiện vật định địa chỉ SHA-256 và trả về con trỏ artifact://
+
+  /api/v1/artifacts/{artifactId}:
+    get:
+      summary: Đọc toàn văn nội dung một BlackboardArtifact theo mã định danh
+      operationId: getArtifactById
+      parameters:
+        - name: artifactId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Nội dung đầy đủ của BlackboardArtifact
+
+  /api/v1/rooms:
+    post:
+      summary: Khởi tạo Phòng hợp tác / Phản biện mới
+      operationId: createRoom
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, protocol_mode, participant_ids, moderator_id]
+              properties:
+                title: { type: string }
+                problem_statement: { type: string }
+                repo_root_path: { type: string }
+                base_branch: { type: string }
+                protocol_mode:
+                  type: string
+                  enum: [council, adversarial, roundtable, execution_mesh]
+                participant_ids:
+                  type: array
+                  minItems: 2
+                  items: { type: string }
+                moderator_id: { type: string }
+                config:
+                  type: object
+                  properties:
+                    max_rounds: { type: integer, default: 3, minimum: 1, maximum: 10 }
+                    turn_timeout_sec: { type: integer, default: 90 }
+                    quorum_ratio: { type: number, default: 0.67 }
+                    tie_breaker: { type: string, enum: [moderator, human], default: human }
+                    budget_tokens: { type: integer, default: 250000 }
+                    anonymize_proposals: { type: boolean, default: true }
+      responses:
+        "201":
+          description: Phòng hợp tác đã tạo
+
+  /api/v1/rooms/{roomId}/events:
+    get:
+      summary: Luồng sự kiện thời gian thực (SSE) của phòng có lọc quyền hiển thị theo giai đoạn
+      operationId: streamRoomEvents
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: viewerParticipantId
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: Text/event-stream các sự kiện phòng (tự động che các bài nộp khác khi vòng 1 đang SEALED)
+          content:
+            text/event-stream:
+              schema: { type: string }
+
+  /api/v1/rooms/{roomId}/steer:
+    post:
+      summary: Con người bơm chỉ dẫn định hướng hoặc phê duyệt tại Human Gate
+      operationId: steerOrApproveRoom
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action:
+                  type: string
+                  enum: [inject_guidance, approve_decision, reject_and_reopen, abort_room]
+                guidance_markdown: { type: string }
+                selected_submission_id: { type: string }
+      responses:
+        "200":
+          description: Đã cập nhật trạng thái điều phối phòng
+
+  /api/v1/rooms/{roomId}/beads/{beadId}/lease:
+    post:
+      summary: Cấp phát Git Worktree cô lập hoặc File Lease Lock cho Agent thực thi
+      operationId: acquireWorkspaceLease
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: beadId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [participant_id, isolation_mode]
+              properties:
+                participant_id: { type: string }
+                isolation_mode: { type: string, enum: [git_worktree, file_lock] }
+                locked_globs: { type: array, items: { type: string } }
+                ttl_seconds: { type: integer, default: 600 }
+      responses:
+        "200":
+          description: Cấp quyền thành công kèm đường dẫn worktree
+        "409":
+          description: Xung đột khóa tệp với một Agent khác đang thực thi

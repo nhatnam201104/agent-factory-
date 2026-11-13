@@ -1,0 +1,149 @@
+:root {
+  --bg: #070d1b;
+  --surface: #111a30;
+  --surface-2: #182443;
+  --border: #273864;
+  --text: #eef3ff;
+  --muted: #98add8;
+  --accent: #38f2c8;
+  --accent-2: #60a5fa;
+  --warn: #fbbf24;
+  --danger: #fb7185;
+  --ok: #34d399;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: radial-gradient(circle at top right, #16244c 0%, var(--bg) 60%);
+  color: var(--text);
+}
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 14px 24px;
+  background: rgba(11, 18, 34, 0.92);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+.app-title h1 { margin: 0; font-size: 1.2rem; }
+.app-title p { margin: 2px 0 0; font-size: 0.82rem; color: var(--muted); }
+.toolbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.btn {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 7px 12px;
+  border-radius: 8px;
+  font-size: 0.81rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn-primary {
+  background: linear-gradient(135deg, #2dd4bf, #3b82f6);
+  color: #04151c;
+  border: none;
+  font-weight: 700;
+}
+.btn-warn {
+  background: rgba(251, 191, 36, 0.16);
+  border-color: var(--warn);
+  color: var(--warn);
+}
+.workspace-main {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 18px 24px 48px;
+}
+.top-grid {
+  display: grid;
+  grid-template-columns: 1.65fr 1fr;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+@media (max-width: 1024px) {
+  .top-grid { grid-template-columns: 1fr; }
+}
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 15px 17px;
+}
+.card h2 {
+  margin: 0 0 10px;
+  font-size: 0.98rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.viewport-box {
+  position: relative;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: #060b16;
+  min-height: 470px;
+}
+.emp-floating-badge {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  background: rgba(10, 17, 34, 0.92);
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  border-radius: 7px;
+  font-size: 0.72rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.emp-floating-badge.selected { border-color: var(--accent); }
+.emp-floating-badge.hand-raised {
+  border-color: var(--warn);
+  background: rgba(68, 44, 7, 0.94);
+}
+.kanban-cols {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(220px, 1fr));
+  gap: 12px;
+  overflow-x: auto;
+}
+.kanban-col {
+  background: #0c1428;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+}
+.ticket-item {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 10px;
+  margin-bottom: 8px;
+  font-size: 0.8rem;
+}
+.meter {
+  height: 7px;
+  background: #091022;
+  border-radius: 99px;
+  overflow: hidden;
+  margin: 5px 0 8px;
+}
+.meter > div { height: 100%; border-radius: 99px; }
+code {
+  background: rgba(96, 165, 250, 0.15);
+  color: #bfdbfe;
+  padding: 2px 5px;
+  border-radius: 4px;
+  font-size: 0.8em;
+}
