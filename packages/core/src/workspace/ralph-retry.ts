@@ -15,7 +15,7 @@ export class RalphRetrySupervisor {
     private readonly db: DatabaseSync,
     private readonly worktrees: GitWorktreeManager,
     private readonly crusher: LogCrusher,
-    private readonly ledger: EventLedger
+    private readonly ledger: EventLedger,
   ) {}
 
   public handleFailure(params: {
@@ -37,7 +37,7 @@ export class RalphRetrySupervisor {
         .prepare(
           `UPDATE task_tickets
            SET retry_count = ?, failure_notes_json = ?, kanban_column = 'blocked', updated_at = ?
-           WHERE id = ?`
+           WHERE id = ?`,
         )
         .run(nextRetry, JSON.stringify(notes), new Date().toISOString(), params.ticket.id);
 
@@ -49,14 +49,14 @@ export class RalphRetrySupervisor {
           ticket_id: params.ticket.id,
           retry_count: nextRetry,
           escalated: true,
-          compact_failure_note: crushed
-        }
+          compact_failure_note: crushed,
+        },
       });
 
       return {
         action: "escalated_to_director",
         retryCount: nextRetry,
-        compactFailureNote: crushed
+        compactFailureNote: crushed,
       };
     }
 
@@ -64,7 +64,7 @@ export class RalphRetrySupervisor {
       .prepare(
         `UPDATE task_tickets
          SET retry_count = ?, failure_notes_json = ?, kanban_column = 'in_progress', updated_at = ?
-         WHERE id = ?`
+         WHERE id = ?`,
       )
       .run(nextRetry, JSON.stringify(notes), new Date().toISOString(), params.ticket.id);
 
@@ -76,14 +76,14 @@ export class RalphRetrySupervisor {
         ticket_id: params.ticket.id,
         retry_count: nextRetry,
         escalated: false,
-        compact_failure_note: crushed
-      }
+        compact_failure_note: crushed,
+      },
     });
 
     return {
       action: "clean_retried",
       retryCount: nextRetry,
-      compactFailureNote: crushed
+      compactFailureNote: crushed,
     };
   }
 }

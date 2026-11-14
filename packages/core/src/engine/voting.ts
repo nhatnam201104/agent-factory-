@@ -42,7 +42,7 @@ export class WeightedVotingResolver {
         winnerAlias: null,
         tiedAliases: [],
         isTie: false,
-        resolutionMethod: "tie_pending"
+        resolutionMethod: "tie_pending",
       };
     }
 
@@ -58,7 +58,7 @@ export class WeightedVotingResolver {
         winnerAlias: null,
         tiedAliases,
         isTie: true,
-        resolutionMethod: "tie_pending"
+        resolutionMethod: "tie_pending",
       };
     }
 
@@ -70,7 +70,7 @@ export class WeightedVotingResolver {
       winnerAlias,
       tiedAliases: [winnerAlias],
       isTie: false,
-      resolutionMethod: firstShare >= 0.67 ? "supermajority" : "ranked_choice"
+      resolutionMethod: firstShare >= 0.67 ? "supermajority" : "ranked_choice",
     };
   }
 }

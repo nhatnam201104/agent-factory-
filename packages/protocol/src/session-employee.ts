@@ -7,7 +7,7 @@ export const DepartmentSchema = z.enum([
   "backend",
   "frontend",
   "security_qa",
-  "devops"
+  "devops",
 ]);
 export type Department = z.infer<typeof DepartmentSchema>;
 
@@ -18,7 +18,7 @@ export const CapabilitySchema = z.enum([
   "read_repo",
   "edit_worktree",
   "run_tests",
-  "moderate"
+  "moderate",
 ]);
 export type Capability = z.infer<typeof CapabilitySchema>;
 
@@ -27,7 +27,7 @@ export const SpatialZoneSchema = z.enum([
   "walking_to_war_room",
   "at_war_room_table",
   "at_kanban_wall",
-  "lounge_offline"
+  "lounge_offline",
 ]);
 export type SpatialZone = z.infer<typeof SpatialZoneSchema>;
 
@@ -38,7 +38,7 @@ export const AvatarPoseSchema = z.enum([
   "running_tests",
   "speaking",
   "hand_raised",
-  "budget_paused"
+  "budget_paused",
 ]);
 export type AvatarPose = z.infer<typeof AvatarPoseSchema>;
 
@@ -47,7 +47,7 @@ export const ConnectionStatusSchema = z.enum([
   "busy",
   "waiting_permission",
   "degraded",
-  "offline"
+  "offline",
 ]);
 export type ConnectionStatus = z.infer<typeof ConnectionStatusSchema>;
 
@@ -58,7 +58,7 @@ export const RoleTemplateSchema = z.object({
   reports_to_role_id: z.string().nullable().optional(),
   avatar_preset: z.string().default("teal-engineer"),
   default_capabilities: z.array(CapabilitySchema),
-  monthly_budget_usd: z.number().min(0).default(25)
+  monthly_budget_usd: z.number().min(0).default(25),
 });
 export type RoleTemplate = z.infer<typeof RoleTemplateSchema>;
 
@@ -77,6 +77,7 @@ export const SessionEmployeeSchema = z.object({
   credential_id: z.string().optional(),
   capabilities: z.array(CapabilitySchema),
   agent_card: AgentCardSchema.optional(),
+  cli_command: z.array(z.string().min(1)).optional(),
   desk_slot_id: z.string().min(1),
   spatial_zone: SpatialZoneSchema.default("at_desk"),
   avatar_pose: AvatarPoseSchema.default("idle"),
@@ -86,14 +87,17 @@ export const SessionEmployeeSchema = z.object({
   session_cost_usd: z.number().min(0).default(0),
   max_session_budget_usd: z.number().min(0).default(5),
   last_tool_call_summary: z.string().optional(),
-  last_heartbeat_at: z.string().datetime()
+  last_heartbeat_at: z.string().datetime(),
 });
 export type SessionEmployee = z.infer<typeof SessionEmployeeSchema>;
 
 export const RegisterEmployeeInputSchema = z.object({
   session_fingerprint: z.string().min(1).optional(),
   employee_code: z.string().regex(/^[A-Z0-9-]+$/),
-  slug: z.string().regex(/^[a-z0-9-]+$/).optional(),
+  slug: z
+    .string()
+    .regex(/^[a-z0-9-]+$/)
+    .optional(),
   display_name: z.string().min(1),
   department: DepartmentSchema,
   job_title: z.string().min(1),
@@ -103,10 +107,11 @@ export const RegisterEmployeeInputSchema = z.object({
   model_identifier: z.string().optional(),
   credential_id: z.string().optional(),
   capabilities: z.array(CapabilitySchema).default(["propose", "critique", "vote", "read_repo"]),
+  agent_card: AgentCardSchema.optional(),
   remote_agent_card_url: z.string().url().optional(),
-  cli_command: z.array(z.string()).optional(),
+  cli_command: z.array(z.string().min(1)).optional(),
   max_session_budget_usd: z.number().min(0).optional(),
-  workspace_uri: z.string().optional()
+  workspace_uri: z.string().optional(),
 });
 export type RegisterEmployeeInput = z.input<typeof RegisterEmployeeInputSchema>;
 
@@ -118,7 +123,7 @@ export const PermissionRequestSchema = z.object({
     "shell_command",
     "destructive_git",
     "budget_topup",
-    "clarification_question"
+    "clarification_question",
   ]),
   prompt_summary: z.string().min(1),
   risk_level: z.enum(["low", "medium", "high"]).default("medium"),
@@ -126,6 +131,6 @@ export const PermissionRequestSchema = z.object({
   answer_text: z.string().optional(),
   resolved_by: z.enum(["director_ui", "lead_agent"]).optional(),
   created_at: z.string().datetime(),
-  resolved_at: z.string().datetime().nullable().optional()
+  resolved_at: z.string().datetime().nullable().optional(),
 });
 export type PermissionRequest = z.infer<typeof PermissionRequestSchema>;

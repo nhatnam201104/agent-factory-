@@ -8,16 +8,11 @@ export const KanbanColumnSchema = z.enum([
   "in_review",
   "director_gate",
   "done",
-  "blocked"
+  "blocked",
 ]);
 export type KanbanColumn = z.infer<typeof KanbanColumnSchema>;
 
-export const TicketPrioritySchema = z.enum([
-  "p0_critical",
-  "p1_high",
-  "p2_normal",
-  "p3_low"
-]);
+export const TicketPrioritySchema = z.enum(["p0_critical", "p1_high", "p2_normal", "p3_low"]);
 export type TicketPriority = z.infer<typeof TicketPrioritySchema>;
 
 export const TaskTicketSchema = z.object({
@@ -38,7 +33,7 @@ export const TaskTicketSchema = z.object({
   max_retries: z.number().int().min(0).default(2),
   failure_notes: z.array(z.string()).default([]),
   created_at: z.string().datetime(),
-  updated_at: z.string().datetime()
+  updated_at: z.string().datetime(),
 });
 export type TaskTicket = z.infer<typeof TaskTicketSchema>;
 
@@ -55,7 +50,7 @@ export const CreateTicketInputSchema = z.object({
   assignee_session_id: z.string().nullable().optional(),
   reviewer_session_ids: z.array(z.string()).default([]),
   repo_root_path: z.string().optional(),
-  base_branch: z.string().default("main")
+  base_branch: z.string().default("main"),
 });
 export type CreateTicketInput = z.input<typeof CreateTicketInputSchema>;
 
@@ -73,7 +68,7 @@ export const WorkspaceLeaseSchema = z.object({
   branch_name: z.string().nullable().optional(),
   locked_globs: z.array(z.string()).default([]),
   expires_at: z.string().datetime(),
-  released_at: z.string().datetime().nullable().optional()
+  released_at: z.string().datetime().nullable().optional(),
 });
 export type WorkspaceLease = z.infer<typeof WorkspaceLeaseSchema>;
 
@@ -83,7 +78,7 @@ export const ArtifactKindSchema = z.enum([
   "code_diff",
   "test_report",
   "log_excerpt",
-  "decision_record"
+  "decision_record",
 ]);
 export type ArtifactKind = z.infer<typeof ArtifactKindSchema>;
 
@@ -100,6 +95,6 @@ export const BlackboardArtifactSchema = z.object({
   byte_size: z.number().int().min(0),
   compact_digest: z.string().max(600),
   version: z.number().int().min(1).default(1),
-  created_at: z.string().datetime()
+  created_at: z.string().datetime(),
 });
 export type BlackboardArtifact = z.infer<typeof BlackboardArtifactSchema>;

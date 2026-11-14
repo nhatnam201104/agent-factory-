@@ -11,7 +11,13 @@ const running = await startHubServer({
   port,
   stateDir,
   staticUiDir,
-  seedDemoOffice: true
+  seedDemoOffice: true,
 });
 
 console.log(`Factory Virtual Office & Arena Hub running at ${running.baseUrl}`);
+if (running.apiToken) {
+  // Printed once to the operator's terminal so the bundled UI can be opened with its token.
+  console.log(
+    `Session token required. Open the UI via: ${running.baseUrl}/?token=${running.apiToken}`,
+  );
+}

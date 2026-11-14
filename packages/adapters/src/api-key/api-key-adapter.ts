@@ -1,11 +1,11 @@
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { isAbsolute, relative, resolve } from "node:path";
 import type { CredentialVault, PayrollBudgetGuard } from "@factory-arena/core";
 import type { SessionEmployee } from "@factory-arena/protocol";
 import type {
   AdapterAssignmentPayload,
   AdapterTurnResult,
-  ParticipantAdapter
+  ParticipantAdapter,
 } from "../adapter.interface.js";
 
 export class APIKeyAdapter implements ParticipantAdapter {
@@ -15,12 +15,14 @@ export class APIKeyAdapter implements ParticipantAdapter {
   constructor(
     private readonly vault: CredentialVault,
     private readonly budgetGuard: PayrollBudgetGuard,
-    private readonly fetchImpl: typeof fetch = fetch
+    private readonly fetchImpl: typeof fetch = fetch,
   ) {}
 
   public async connect(employee: SessionEmployee): Promise<void> {
     if (!employee.credential_id) {
-      throw new Error(`APIKeyAdapter requires credential_id for employee ${employee.employee_code}`);
+      throw new Error(
+        `APIKeyAdapter requires credential_id for employee ${employee.employee_code}`,
+      );
     }
     this.vault.resolveDecryptedSecret(employee.credential_id);
     this.connected.add(employee.id);
@@ -38,12 +40,19 @@ export class APIKeyAdapter implements ParticipantAdapter {
     // API key workers execute stateless calls gated by PayrollBudgetGuard
   }
 
-  public readRepoExcerpt(repoRoot: string, relativeFilePath: string, startLine = 1, endLine = 80): string {
-    const abs = resolve(repoRoot, relativeFilePath);
-    if (!abs.startsWith(resolve(repoRoot))) {
+  public readRepoExcerpt(
+    repoRoot: string,
+    relativeFilePath: string,
+    startLine = 1,
+    endLine = 80,
+  ): string {
+    const resolvedRoot = resolve(repoRoot);
+    const abs = resolve(resolvedRoot, relativeFilePath);
+    const rel = relative(resolvedRoot, abs);
+    if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
       throw new Error("Path traversal outside repository root is prohibited");
     }
-    if (!existsSync(abs)) {
+    if (!existsSync(abs) || !statSync(abs).isFile()) {
       return `[File not found: ${relativeFilePath}]`;
     }
     const lines = readFileSync(abs, "utf8").split(/\r?\n/);
@@ -55,12 +64,18 @@ export class APIKeyAdapter implements ParticipantAdapter {
 
   public async sendAssignment(
     employee: SessionEmployee,
-    assignment: AdapterAssignmentPayload
+    assignment: AdapterAssignmentPayload,
   ): Promise<AdapterTurnResult> {
     if (!employee.credential_id) {
       throw new Error(`Missing credential_id on employee ${employee.id}`);
     }
     const { metadata, rawSecret } = this.vault.resolveDecryptedSecret(employee.credential_id);
+    this.budgetGuard.assertWithinBudget({
+      sessionEmployeeId: employee.id,
+      roomId: assignment.roomId,
+      credentialId: employee.credential_id,
+      credentialMaxCostUsd: metadata.max_cost_usd,
+    });
     const start = Date.now();
     const model = employee.model_identifier ?? "gpt-4o-mini";
 
@@ -76,13 +91,15 @@ export class APIKeyAdapter implements ParticipantAdapter {
         model,
         max_tokens: 1024,
         system: assignment.systemInstructions ?? employee.system_instructions ?? employee.job_title,
-        messages: [{ role: "user", content: assignment.prompt }]
+        messages: [{ role: "user", content: assignment.prompt }],
       };
     } else if (metadata.provider_kind === "gemini") {
-      const base = metadata.base_url ?? `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+      const base =
+        metadata.base_url ??
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
       url = `${base}${base.includes("?") ? "&" : "?"}key=${encodeURIComponent(rawSecret)}`;
       body = {
-        contents: [{ role: "user", parts: [{ text: assignment.prompt }] }]
+        contents: [{ role: "user", parts: [{ text: assignment.prompt }] }],
       };
     } else {
       if (!url.endsWith("/chat/completions")) {
@@ -95,17 +112,17 @@ export class APIKeyAdapter implements ParticipantAdapter {
           {
             role: "system",
             content:
-              assignment.systemInstructions ?? employee.system_instructions ?? employee.job_title
+              assignment.systemInstructions ?? employee.system_instructions ?? employee.job_title,
           },
-          { role: "user", content: assignment.prompt }
-        ]
+          { role: "user", content: assignment.prompt },
+        ],
       };
     }
 
     const resp = await this.fetchImpl(url, {
       method: "POST",
       headers,
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
     });
 
     if (!resp.ok) {
@@ -124,7 +141,7 @@ export class APIKeyAdapter implements ParticipantAdapter {
 
     const promptTokens = Number(data.usage?.prompt_tokens ?? data.usage?.input_tokens ?? 120);
     const completionTokens = Number(
-      data.usage?.completion_tokens ?? data.usage?.output_tokens ?? 180
+      data.usage?.completion_tokens ?? data.usage?.output_tokens ?? 180,
     );
     const estimatedCostUsd = Number(((promptTokens + completionTokens) * 0.000002).toFixed(6));
 
@@ -133,7 +150,7 @@ export class APIKeyAdapter implements ParticipantAdapter {
       roomId: assignment.roomId,
       promptTokens,
       completionTokens,
-      costUsd: estimatedCostUsd
+      costUsd: estimatedCostUsd,
     });
 
     return {
@@ -142,7 +159,7 @@ export class APIKeyAdapter implements ParticipantAdapter {
       promptTokens,
       completionTokens,
       estimatedCostUsd,
-      latencyMs: Date.now() - start
+      latencyMs: Date.now() - start,
     };
   }
 }

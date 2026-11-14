@@ -1,9 +1,9 @@
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { DELIBERATION_DDL } from "./schema/deliberation.js";
 import { EMPLOYEES_DDL } from "./schema/employees.js";
 import { TICKETS_DDL } from "./schema/tickets.js";
-import { DELIBERATION_DDL } from "./schema/deliberation.js";
 
 const VAULT_DDL = `
 CREATE TABLE IF NOT EXISTS credential_profiles (
@@ -47,6 +47,12 @@ export function openArenaDatabase(dbPath: string): DatabaseSync {
   db.exec("PRAGMA foreign_keys = ON;");
   db.exec(VAULT_DDL);
   db.exec(EMPLOYEES_DDL);
+  const empCols = db.prepare("PRAGMA table_info(session_employees)").all() as Array<{
+    name?: string;
+  }>;
+  if (!empCols.some((c) => c.name === "cli_command_json")) {
+    db.exec("ALTER TABLE session_employees ADD COLUMN cli_command_json TEXT;");
+  }
   db.exec(TICKETS_DDL);
   db.exec(DELIBERATION_DDL);
   return db;

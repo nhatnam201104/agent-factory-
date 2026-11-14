@@ -1,14 +1,14 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import {
-  CreateCredentialInputSchema,
   type CreateCredentialInput,
+  CreateCredentialInputSchema,
   type CredentialMetadata,
   isoNow,
-  prefixedUlid
+  prefixedUlid,
 } from "@factory-arena/protocol";
-import { assertSafeRemoteUrl } from "./ssrf-guard.js";
 import type { SecretScrubber } from "./secret-scrubber.js";
+import { assertSafeRemoteUrl } from "./ssrf-guard.js";
 
 export class CredentialVault {
   private readonly masterKey: Buffer;
@@ -16,7 +16,7 @@ export class CredentialVault {
   constructor(
     private readonly db: DatabaseSync,
     private readonly scrubber: SecretScrubber,
-    passphrase: string = process.env.FACTORY_ARENA_MASTER_KEY ?? "factory-arena-local-dev-vault-v1"
+    passphrase: string = process.env.FACTORY_ARENA_MASTER_KEY ?? "factory-arena-local-dev-vault-v1",
   ) {
     this.masterKey = scryptSync(passphrase, "factory-arena-aes256-salt-v1", 32);
   }
@@ -31,10 +31,7 @@ export class CredentialVault {
 
     const iv = randomBytes(12);
     const cipher = createCipheriv("aes-256-gcm", this.masterKey, iv);
-    const ciphertext = Buffer.concat([
-      cipher.update(input.raw_secret, "utf8"),
-      cipher.final()
-    ]);
+    const ciphertext = Buffer.concat([cipher.update(input.raw_secret, "utf8"), cipher.final()]);
     const authTag = cipher.getAuthTag();
     if (iv.byteLength !== 12 || authTag.byteLength !== 16) {
       throw new Error("Invalid AES-256-GCM IV or AuthTag length");
@@ -48,7 +45,7 @@ export class CredentialVault {
       .prepare(
         `INSERT INTO credential_profiles
           (id, label, provider_kind, base_url, encrypted_secret, rate_limit_rpm, max_cost_usd, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -58,7 +55,7 @@ export class CredentialVault {
         packedSecret,
         input.rate_limit_rpm ?? null,
         input.max_cost_usd ?? null,
-        createdAt
+        createdAt,
       );
 
     return {
@@ -68,7 +65,7 @@ export class CredentialVault {
       base_url: input.base_url,
       rate_limit_rpm: input.rate_limit_rpm,
       max_cost_usd: input.max_cost_usd,
-      created_at: createdAt
+      created_at: createdAt,
     };
   }
 
@@ -76,7 +73,7 @@ export class CredentialVault {
     const rows = this.db
       .prepare(
         `SELECT id, label, provider_kind, base_url, rate_limit_rpm, max_cost_usd, created_at
-         FROM credential_profiles ORDER BY created_at DESC`
+         FROM credential_profiles ORDER BY created_at DESC`,
       )
       .all() as Array<Record<string, unknown>>;
 
@@ -87,7 +84,7 @@ export class CredentialVault {
       base_url: r.base_url ? String(r.base_url) : undefined,
       rate_limit_rpm: r.rate_limit_rpm != null ? Number(r.rate_limit_rpm) : undefined,
       max_cost_usd: r.max_cost_usd != null ? Number(r.max_cost_usd) : undefined,
-      created_at: String(r.created_at)
+      created_at: String(r.created_at),
     }));
   }
 
@@ -102,7 +99,7 @@ export class CredentialVault {
     const row = this.db
       .prepare(
         `SELECT id, label, provider_kind, base_url, encrypted_secret, rate_limit_rpm, max_cost_usd, created_at
-         FROM credential_profiles WHERE id = ?`
+         FROM credential_profiles WHERE id = ?`,
       )
       .get(credentialId) as Record<string, unknown> | undefined;
 
@@ -118,7 +115,7 @@ export class CredentialVault {
     const decipher = createDecipheriv("aes-256-gcm", this.masterKey, iv);
     decipher.setAuthTag(authTag);
     const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString(
-      "utf8"
+      "utf8",
     );
     this.scrubber.registerSecret(decrypted);
 
@@ -130,9 +127,9 @@ export class CredentialVault {
         base_url: row.base_url ? String(row.base_url) : undefined,
         rate_limit_rpm: row.rate_limit_rpm != null ? Number(row.rate_limit_rpm) : undefined,
         max_cost_usd: row.max_cost_usd != null ? Number(row.max_cost_usd) : undefined,
-        created_at: String(row.created_at)
+        created_at: String(row.created_at),
       },
-      rawSecret: decrypted
+      rawSecret: decrypted,
     };
   }
 }

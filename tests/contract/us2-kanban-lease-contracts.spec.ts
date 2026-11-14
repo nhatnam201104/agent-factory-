@@ -15,14 +15,14 @@ describe("US2 Contract Tests: Kanban Tickets, Blackboard Artifacts & HTTP 409 Le
         display_name: "Agent A",
         department: "backend",
         job_title: "Engineer A",
-        transport_type: "mcp_bridge"
+        transport_type: "mcp_bridge",
       });
       const empB = hub.core.roster.registerOrRebindSession({
         employee_code: "EMP-B",
         display_name: "Agent B",
         department: "backend",
         job_title: "Engineer B",
-        transport_type: "mcp_bridge"
+        transport_type: "mcp_bridge",
       });
 
       const tRes = await hub.app.request("/api/v1/tickets", {
@@ -31,41 +31,35 @@ describe("US2 Contract Tests: Kanban Tickets, Blackboard Artifacts & HTTP 409 Le
         body: JSON.stringify({
           title: "Refactor protocol schemas",
           priority: "p1_high",
-          repo_root_path: "/tmp/demo-repo"
-        })
+          repo_root_path: "/tmp/demo-repo",
+        }),
       });
       expect(tRes.status).toBe(201);
       const ticket = await tRes.json();
 
-      const grantRes = await hub.app.request(
-        `/api/v1/rooms/room-1/beads/${ticket.id}/lease`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            participant_id: empA.id,
-            isolation_mode: "file_lock",
-            repo_root_path: "/tmp/demo-repo",
-            locked_globs: ["packages/protocol/**"]
-          })
-        }
-      );
+      const grantRes = await hub.app.request(`/api/v1/rooms/room-1/beads/${ticket.id}/lease`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          participant_id: empA.id,
+          isolation_mode: "file_lock",
+          repo_root_path: "/tmp/demo-repo",
+          locked_globs: ["packages/protocol/**"],
+        }),
+      });
       expect(grantRes.status).toBe(200);
 
       // Overlapping glob from empB on same repo must return 409 Conflict
-      const conflictRes = await hub.app.request(
-        `/api/v1/rooms/room-1/beads/${ticket.id}/lease`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            participant_id: empB.id,
-            isolation_mode: "file_lock",
-            repo_root_path: "/tmp/demo-repo",
-            locked_globs: ["packages/protocol/src/ledger-events.ts"]
-          })
-        }
-      );
+      const conflictRes = await hub.app.request(`/api/v1/rooms/room-1/beads/${ticket.id}/lease`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          participant_id: empB.id,
+          isolation_mode: "file_lock",
+          repo_root_path: "/tmp/demo-repo",
+          locked_globs: ["packages/protocol/src/ledger-events.ts"],
+        }),
+      });
       expect(conflictRes.status).toBe(409);
 
       // Artifact publish + read roundtrip via MCP
@@ -75,7 +69,7 @@ describe("US2 Contract Tests: Kanban Tickets, Blackboard Artifacts & HTTP 409 Le
         kind: "code_diff",
         title: "Protocol diff",
         content: "+ export const NEW_FIELD = true;\n".repeat(100),
-        compact_digest: "Added NEW_FIELD to protocol package"
+        compact_digest: "Added NEW_FIELD to protocol package",
       }) as { pointer: string; artifact: { id: string } };
       expect(pubOut.pointer).toMatch(/^artifact:\/\/art_/);
 

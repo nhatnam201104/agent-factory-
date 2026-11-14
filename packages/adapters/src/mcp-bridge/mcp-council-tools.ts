@@ -5,13 +5,13 @@ import {
   MCPPollAssignmentInputSchema,
   MCPPublishDecisionInputSchema,
   MCPSubmitCritiqueInputSchema,
-  MCPSubmitProposalInputSchema
+  MCPSubmitProposalInputSchema,
 } from "@factory-arena/protocol";
 
 export function handleCouncilMcpTool(
   core: ArenaCoreContainer,
   toolName: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
 ): unknown | undefined {
   if (toolName === "arena_join_room") {
     const input = MCPJoinRoomInputSchema.parse(args);
@@ -23,12 +23,12 @@ export function handleCouncilMcpTool(
       department: input.capabilities.includes("moderate") ? "leadership" : "architecture",
       job_title: input.persona_role,
       transport_type: "mcp_bridge",
-      capabilities: input.capabilities
+      capabilities: input.capabilities,
     });
     const room = core.council.getRoom(input.room_id);
     return {
       employee: emp,
-      room_status: room?.status ?? "not_created_yet"
+      room_status: room?.status ?? "not_created_yet",
     };
   }
 
@@ -45,7 +45,7 @@ export function handleCouncilMcpTool(
       sessionEmployeeId: input.participant_id,
       summary: input.summary,
       contentMarkdown: input.content_markdown,
-      citations: input.citations
+      citations: input.citations,
     });
   }
 
@@ -59,7 +59,7 @@ export function handleCouncilMcpTool(
       rubricScores: input.rubric_scores,
       findings: input.findings,
       strengthsSummary: input.strengths_summary,
-      blindSpotsSummary: input.blind_spots_summary
+      blindSpotsSummary: input.blind_spots_summary,
     });
   }
 
@@ -71,7 +71,7 @@ export function handleCouncilMcpTool(
       voterSessionId: input.voter_id,
       rankedAliases: input.ranked_aliases,
       confidence: input.confidence,
-      rationale: input.rationale
+      rationale: input.rationale,
     });
   }
 
@@ -83,7 +83,7 @@ export function handleCouncilMcpTool(
       winningAlias: input.winning_alias,
       finalPlanMarkdown: input.final_plan_markdown,
       adoptedAmendments: input.adopted_amendments,
-      dissentLog: input.dissent_log
+      dissentLog: input.dissent_log,
     });
   }
 

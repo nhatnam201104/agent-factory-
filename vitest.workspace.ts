@@ -12,6 +12,14 @@ export default defineWorkspace([
   {
     resolve: { alias },
     test: {
+      name: "unit",
+      include: ["tests/unit/**/*.spec.ts"],
+      environment: "node",
+    },
+  },
+  {
+    resolve: { alias },
+    test: {
       name: "contract",
       include: ["tests/contract/**/*.spec.ts"],
       environment: "node",

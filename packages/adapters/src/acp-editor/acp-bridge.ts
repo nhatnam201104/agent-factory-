@@ -3,7 +3,7 @@ import type { SessionEmployee } from "@factory-arena/protocol";
 import type {
   AdapterAssignmentPayload,
   AdapterTurnResult,
-  ParticipantAdapter
+  ParticipantAdapter,
 } from "../adapter.interface.js";
 
 export interface AcpWireMessage {
@@ -36,20 +36,20 @@ export class ACPBridgeAdapter implements ParticipantAdapter {
 
   public async sendAssignment(
     employee: SessionEmployee,
-    assignment: AdapterAssignmentPayload
+    assignment: AdapterAssignmentPayload,
   ): Promise<AdapterTurnResult> {
     this.core.roster.reportDeskActivity({
       employeeId: employee.id,
       avatarPose: "typing_code",
-      lastToolCallSummary: `ACP session/prompt dispatched (${assignment.roomId})`
+      lastToolCallSummary: `ACP session/prompt dispatched (${assignment.roomId})`,
     });
     return {
       contentMarkdown: `ACP prompt delivered to editor session ${employee.employee_code}`,
-      summary: `ACP prompt delivered`,
+      summary: "ACP prompt delivered",
       promptTokens: 0,
       completionTokens: 0,
       estimatedCostUsd: 0,
-      latencyMs: 2
+      latencyMs: 2,
     };
   }
 
@@ -57,7 +57,7 @@ export class ACPBridgeAdapter implements ParticipantAdapter {
     _employeeId: string,
     permissionId: string,
     decision: "allowed" | "denied" | "answered",
-    answerText?: string
+    answerText?: string,
   ): Promise<void> {
     this.core.roster.resolvePermission({ permissionId, decision, answerText });
   }
@@ -72,9 +72,9 @@ export class ACPBridgeAdapter implements ParticipantAdapter {
           protocolVersion: negotiated === 1 ? 1 : 1,
           agentCapabilities: {
             loadSession: true,
-            promptCapabilities: { embeddedContext: true }
-          }
-        }
+            promptCapabilities: { embeddedContext: true },
+          },
+        },
       };
     }
 
@@ -88,20 +88,20 @@ export class ACPBridgeAdapter implements ParticipantAdapter {
         department: "frontend",
         job_title: "ACP Editor Coding Agent",
         transport_type: "acp_editor",
-        workspace_uri: workspaceUri
+        workspace_uri: workspaceUri,
       });
       this.sessions.set(emp.id, { protocolVersion: 1, workspaceUri });
       return {
         jsonrpc: "2.0" as const,
         id: msg.id ?? null,
-        result: { sessionId: emp.id, employee: emp }
+        result: { sessionId: emp.id, employee: emp },
       };
     }
 
     return {
       jsonrpc: "2.0" as const,
       id: msg.id ?? null,
-      error: { code: -32601, message: `Unsupported ACP method: ${msg.method}` }
+      error: { code: -32601, message: `Unsupported ACP method: ${msg.method}` },
     };
   }
 }

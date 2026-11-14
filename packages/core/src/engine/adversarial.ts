@@ -8,9 +8,8 @@ export class AdversarialEngine {
   }): { continueDebate: boolean; blockingFindingsCount: number } {
     const blockingFindingsCount = params.critiquesInRound.reduce(
       (acc, c) =>
-        acc +
-        c.findings.filter((f) => f.severity === "critical" || f.severity === "high").length,
-      0
+        acc + c.findings.filter((f) => f.severity === "critical" || f.severity === "high").length,
+      0,
     );
 
     if (params.currentRound >= params.maxRounds) {
@@ -19,7 +18,7 @@ export class AdversarialEngine {
 
     return {
       continueDebate: blockingFindingsCount > 0,
-      blockingFindingsCount
+      blockingFindingsCount,
     };
   }
 }
@@ -31,10 +30,7 @@ export class RoundtableRouter {
     lastSpeakerId?: string;
   }): string | null {
     for (const p of params.participantCodes) {
-      if (
-        params.messageText.includes(`@${p.code}`) ||
-        params.messageText.includes(`@${p.slug}`)
-      ) {
+      if (params.messageText.includes(`@${p.code}`) || params.messageText.includes(`@${p.slug}`)) {
         return p.id;
       }
     }

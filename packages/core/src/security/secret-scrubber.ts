@@ -3,7 +3,7 @@ const TOKEN_PATTERNS = [
   /\bsk-ant-[A-Za-z0-9_-]{16,}\b/g,
   /\bghp_[A-Za-z0-9]{20,}\b/g,
   /\bAIza[0-9A-Za-z_-]{25,}\b/g,
-  /\bBearer\s+[A-Za-z0-9._~+/-]{20,}\b/gi
+  /\bBearer\s+[A-Za-z0-9._~+/-]{20,}\b/gi,
 ];
 
 export class SecretScrubber {

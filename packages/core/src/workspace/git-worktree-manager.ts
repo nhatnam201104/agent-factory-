@@ -24,9 +24,7 @@ export class GitWorktreeManager {
     const safeEmp = params.employeeCode.replace(/[^a-zA-Z0-9_-]/g, "_");
 
     const branchName = `arena/${safeRoom}/${safeTicket}-${safeEmp}`;
-    const worktreePath = resolve(
-      join(this.worktreesBaseDir, safeRoom, `${safeTicket}-${safeEmp}`)
-    );
+    const worktreePath = resolve(join(this.worktreesBaseDir, safeRoom, `${safeTicket}-${safeEmp}`));
 
     if (existsSync(worktreePath)) {
       return { worktreePath, branchName };
@@ -37,23 +35,23 @@ export class GitWorktreeManager {
 
     execFileSync("git", ["worktree", "add", "-B", branchName, worktreePath, baseRef], {
       cwd: params.repoRootPath,
-      stdio: "pipe"
+      stdio: "pipe",
     });
 
     return { worktreePath, branchName };
   }
 
-  public resetWorktreeClean(worktreePath: string, targetRef: string = "HEAD"): void {
+  public resetWorktreeClean(worktreePath: string, targetRef = "HEAD"): void {
     if (!existsSync(worktreePath)) {
       throw new Error(`Worktree path does not exist: ${worktreePath}`);
     }
     execFileSync("git", ["reset", "--hard", targetRef], {
       cwd: worktreePath,
-      stdio: "pipe"
+      stdio: "pipe",
     });
     execFileSync("git", ["clean", "-fd"], {
       cwd: worktreePath,
-      stdio: "pipe"
+      stdio: "pipe",
     });
   }
 
@@ -62,7 +60,7 @@ export class GitWorktreeManager {
     try {
       execFileSync("git", ["worktree", "remove", "--force", worktreePath], {
         cwd: repoRootPath,
-        stdio: "pipe"
+        stdio: "pipe",
       });
     } catch {
       rmSync(worktreePath, { recursive: true, force: true });

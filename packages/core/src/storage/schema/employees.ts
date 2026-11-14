@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS session_employees (
   credential_id TEXT,
   capabilities_json TEXT NOT NULL,
   agent_card_json TEXT,
+  cli_command_json TEXT,
   desk_slot_id TEXT NOT NULL,
   spatial_zone TEXT NOT NULL DEFAULT 'at_desk',
   avatar_pose TEXT NOT NULL DEFAULT 'idle',

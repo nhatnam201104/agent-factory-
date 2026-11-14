@@ -29,7 +29,7 @@ export function isoNow(): string {
 export const VisibilityScopeSchema = z.enum([
   "sealed_author_only",
   "anonymized_peers",
-  "public_room"
+  "public_room",
 ]);
 export type VisibilityScope = z.infer<typeof VisibilityScopeSchema>;
 
@@ -58,7 +58,7 @@ export const LedgerEventTypeSchema = z.enum([
   "workspace_lease.conflict_detected",
   "bead.ralph_retry_triggered",
   "bead.verified",
-  "artifact.published"
+  "artifact.published",
 ]);
 export type LedgerEventType = z.infer<typeof LedgerEventTypeSchema>;
 
@@ -66,7 +66,7 @@ export const TokenAccountingSchema = z.object({
   prompt_tokens: z.number().int().min(0).default(0),
   completion_tokens: z.number().int().min(0).default(0),
   saved_by_context_slicer_tokens: z.number().int().min(0).default(0),
-  estimated_cost_usd: z.number().min(0).default(0)
+  estimated_cost_usd: z.number().min(0).default(0),
 });
 export type TokenAccounting = z.infer<typeof TokenAccountingSchema>;
 
@@ -79,7 +79,7 @@ export const LedgerEventEnvelopeSchema = z.object({
   visibility: VisibilityScopeSchema.default("public_room"),
   event_type: LedgerEventTypeSchema,
   token_accounting: TokenAccountingSchema.optional(),
-  payload: z.record(z.unknown())
+  payload: z.record(z.unknown()),
 });
 export type LedgerEventEnvelope = z.infer<typeof LedgerEventEnvelopeSchema>;
 
@@ -89,7 +89,7 @@ export const ProviderKindSchema = z.enum([
   "gemini",
   "ollama",
   "a2a_bearer",
-  "mcp_token"
+  "mcp_token",
 ]);
 export type ProviderKind = z.infer<typeof ProviderKindSchema>;
 
@@ -99,7 +99,7 @@ export const CreateCredentialInputSchema = z.object({
   base_url: z.string().url().optional(),
   raw_secret: z.string().min(1),
   rate_limit_rpm: z.number().int().positive().optional(),
-  max_cost_usd: z.number().min(0).optional()
+  max_cost_usd: z.number().min(0).optional(),
 });
 export type CreateCredentialInput = z.infer<typeof CreateCredentialInputSchema>;
 
@@ -110,6 +110,6 @@ export const CredentialMetadataSchema = z.object({
   base_url: z.string().optional(),
   rate_limit_rpm: z.number().int().positive().optional(),
   max_cost_usd: z.number().min(0).optional(),
-  created_at: z.string()
+  created_at: z.string(),
 });
 export type CredentialMetadata = z.infer<typeof CredentialMetadataSchema>;

@@ -15,7 +15,7 @@ export class HeartbeatScheduler {
 
   constructor(
     private readonly roster: OfficeRosterService,
-    private readonly kanban: KanbanTaskService
+    private readonly kanban: KanbanTaskService,
   ) {}
 
   public registerSchedule(rule: HeartbeatScheduleRule): void {
@@ -42,7 +42,7 @@ export class HeartbeatScheduler {
       this.roster.reportDeskActivity({
         employeeId: emp.id,
         avatarPose: "typing_code",
-        lastToolCallSummary: `heartbeat wake: checking ${queued[0].id}`
+        lastToolCallSummary: `heartbeat wake: checking ${queued[0].id}`,
       });
     }
     if (rule.onWake) {

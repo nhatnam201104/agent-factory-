@@ -1,6 +1,6 @@
-import { Hono } from "hono";
 import type { ArenaCoreContainer } from "@factory-arena/core";
 import { CreateCredentialInputSchema } from "@factory-arena/protocol";
+import { Hono } from "hono";
 
 export function createVaultRoutes(core: ArenaCoreContainer): Hono {
   const router = new Hono();

@@ -1,13 +1,13 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  LedgerEventEnvelopeSchema,
   type LedgerEventEnvelope,
+  LedgerEventEnvelopeSchema,
   type LedgerEventType,
   type TokenAccounting,
   type VisibilityScope,
   isoNow,
-  prefixedUlid
+  prefixedUlid,
 } from "@factory-arena/protocol";
 import type { SecretScrubber } from "../security/secret-scrubber.js";
 
@@ -19,7 +19,7 @@ export class EventLedger {
 
   constructor(
     private readonly eventsDir: string,
-    private readonly scrubber: SecretScrubber
+    private readonly scrubber: SecretScrubber,
   ) {
     mkdirSync(this.eventsDir, { recursive: true });
   }
@@ -31,13 +31,57 @@ export class EventLedger {
 
   private nextSequence(roomId: string): number {
     if (!this.sequences.has(roomId)) {
-      const existing = this.readEvents(roomId);
+      const existing = this.readAllEnvelopesFromDisk(roomId);
       const maxSeq = existing.reduce((m, e) => Math.max(m, e.sequence_no), 0);
       this.sequences.set(roomId, maxSeq);
     }
     const next = (this.sequences.get(roomId) ?? 0) + 1;
     this.sequences.set(roomId, next);
     return next;
+  }
+
+  private readAllEnvelopesFromDisk(roomId: string): LedgerEventEnvelope[] {
+    const path = this.roomFilePath(roomId);
+    if (!existsSync(path)) {
+      return [];
+    }
+    const lines = readFileSync(path, "utf8")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
+
+    return lines.map((line) => LedgerEventEnvelopeSchema.parse(JSON.parse(line)));
+  }
+
+  public projectEventForViewer(
+    ev: LedgerEventEnvelope,
+    viewerSessionEmployeeId?: string,
+  ): LedgerEventEnvelope | null {
+    const effectiveViewer = viewerSessionEmployeeId?.trim() || "";
+    if (ev.visibility === "sealed_author_only") {
+      if (effectiveViewer.length > 0 && ev.actor_session_employee_id === effectiveViewer) {
+        return ev;
+      }
+      return null;
+    }
+
+    if (ev.visibility === "anonymized_peers") {
+      const {
+        session_employee_id: _s,
+        reviewer_session_id: _r,
+        voter_session_id: _v,
+        model_identifier: _m,
+        employee_code: _e,
+        ...sanitizedPayload
+      } = ev.payload;
+      return {
+        ...ev,
+        actor_session_employee_id: "anonymous",
+        payload: sanitizedPayload,
+      };
+    }
+
+    return ev;
   }
 
   public append(params: {
@@ -58,7 +102,7 @@ export class EventLedger {
       visibility: params.visibility ?? "public_room",
       event_type: params.eventType,
       token_accounting: params.tokenAccounting,
-      payload: scrubbedPayload
+      payload: scrubbedPayload,
     });
 
     appendFileSync(this.roomFilePath(params.roomId), `${JSON.stringify(envelope)}\n`, "utf8");
@@ -70,41 +114,15 @@ export class EventLedger {
   }
 
   public readEvents(roomId: string, viewerSessionEmployeeId?: string): LedgerEventEnvelope[] {
-    const path = this.roomFilePath(roomId);
-    if (!existsSync(path)) {
-      return [];
+    const parsed = this.readAllEnvelopesFromDisk(roomId);
+    const visible: LedgerEventEnvelope[] = [];
+    for (const ev of parsed) {
+      const projected = this.projectEventForViewer(ev, viewerSessionEmployeeId);
+      if (projected) {
+        visible.push(projected);
+      }
     }
-    const lines = readFileSync(path, "utf8")
-      .split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean);
-
-    const parsed = lines.map((line) => LedgerEventEnvelopeSchema.parse(JSON.parse(line)));
-    if (!viewerSessionEmployeeId) {
-      return parsed;
-    }
-
-    return parsed
-      .filter((ev) => {
-        if (ev.visibility === "sealed_author_only") {
-          return ev.actor_session_employee_id === viewerSessionEmployeeId;
-        }
-        return true;
-      })
-      .map((ev) => {
-        if (ev.visibility === "anonymized_peers") {
-          const clonedPayload = { ...ev.payload };
-          delete clonedPayload.session_employee_id;
-          delete clonedPayload.model_identifier;
-          delete clonedPayload.employee_code;
-          return {
-            ...ev,
-            actor_session_employee_id: "anonymous",
-            payload: clonedPayload
-          };
-        }
-        return ev;
-      });
+    return visible;
   }
 
   public subscribe(listener: LedgerSubscriber): () => void {

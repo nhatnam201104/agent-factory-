@@ -4,7 +4,7 @@ import {
   type WorkspaceLease,
   WorkspaceLeaseSchema,
   isoNow,
-  prefixedUlid
+  prefixedUlid,
 } from "@factory-arena/protocol";
 import type { EventLedger } from "../storage/event-ledger.js";
 import type { GitWorktreeManager } from "./git-worktree-manager.js";
@@ -12,7 +12,7 @@ import type { GitWorktreeManager } from "./git-worktree-manager.js";
 export class LeaseConflictError extends Error {
   constructor(
     message: string,
-    public readonly conflictingLease: WorkspaceLease
+    public readonly conflictingLease: WorkspaceLease,
   ) {
     super(message);
     this.name = "LeaseConflictError";
@@ -20,7 +20,10 @@ export class LeaseConflictError extends Error {
 }
 
 function normalizePrefix(globPattern: string): string {
-  return globPattern.replace(/\/?\*\*.*$/, "").replace(/\/?\*.*$/, "").replace(/\/+$/, "");
+  return globPattern
+    .replace(/\/?\*\*.*$/, "")
+    .replace(/\/?\*.*$/, "")
+    .replace(/\/+$/, "");
 }
 
 export function globsOverlap(a: string, b: string): boolean {
@@ -35,7 +38,7 @@ export class FileLeaseRegistry {
   constructor(
     private readonly db: DatabaseSync,
     private readonly worktrees: GitWorktreeManager,
-    private readonly ledger: EventLedger
+    private readonly ledger: EventLedger,
   ) {}
 
   public acquireLease(params: {
@@ -61,7 +64,7 @@ export class FileLeaseRegistry {
            WHERE repo_root_path = ?
              AND isolation_mode = 'file_lock'
              AND released_at IS NULL
-             AND expires_at > ?`
+             AND expires_at > ?`,
         )
         .all(params.repoRootPath, now) as Array<Record<string, unknown>>;
 
@@ -82,12 +85,12 @@ export class FileLeaseRegistry {
               requested_ticket_id: params.ticketId,
               requested_globs: globs,
               holder_session_employee_id: existing.session_employee_id,
-              conflicting_lease_id: existing.id
-            }
+              conflicting_lease_id: existing.id,
+            },
           });
           throw new LeaseConflictError(
             `File lock conflict on ${params.repoRootPath} with active lease ${existing.id}`,
-            existing
+            existing,
           );
         }
       }
@@ -101,7 +104,7 @@ export class FileLeaseRegistry {
         baseBranch: params.baseBranch,
         roomId: params.roomId,
         ticketId: params.ticketId,
-        employeeCode: params.employeeCode
+        employeeCode: params.employeeCode,
       });
       worktreePath = wt.worktreePath;
       branchName = wt.branchName;
@@ -118,14 +121,14 @@ export class FileLeaseRegistry {
       branch_name: branchName,
       locked_globs: globs,
       expires_at: expiresAt,
-      released_at: null
+      released_at: null,
     });
 
     this.db
       .prepare(
         `INSERT INTO workspace_leases
           (id, room_id, ticket_id, session_employee_id, repo_root_path, isolation_mode, worktree_path, branch_name, locked_globs_json, expires_at, released_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
       )
       .run(
         lease.id,
@@ -137,14 +140,14 @@ export class FileLeaseRegistry {
         lease.worktree_path ?? null,
         lease.branch_name ?? null,
         JSON.stringify(lease.locked_globs),
-        lease.expires_at
+        lease.expires_at,
       );
 
     this.ledger.append({
       roomId: params.roomId,
       eventType: "workspace_lease.acquired",
       actorSessionEmployeeId: params.sessionEmployeeId,
-      payload: { lease }
+      payload: { lease },
     });
 
     return lease;
@@ -152,7 +155,7 @@ export class FileLeaseRegistry {
 
   public releaseLease(leaseId: string): void {
     this.db
-      .prepare(`UPDATE workspace_leases SET released_at = ? WHERE id = ?`)
+      .prepare("UPDATE workspace_leases SET released_at = ? WHERE id = ?")
       .run(isoNow(), leaseId);
   }
 
@@ -161,11 +164,11 @@ export class FileLeaseRegistry {
     const rows = repoRootPath
       ? (this.db
           .prepare(
-            `SELECT * FROM workspace_leases WHERE repo_root_path = ? AND released_at IS NULL AND expires_at > ?`
+            "SELECT * FROM workspace_leases WHERE repo_root_path = ? AND released_at IS NULL AND expires_at > ?",
           )
           .all(repoRootPath, now) as Array<Record<string, unknown>>)
       : (this.db
-          .prepare(`SELECT * FROM workspace_leases WHERE released_at IS NULL AND expires_at > ?`)
+          .prepare("SELECT * FROM workspace_leases WHERE released_at IS NULL AND expires_at > ?")
           .all(now) as Array<Record<string, unknown>>);
     return rows.map((r) => this.mapRow(r));
   }
@@ -182,7 +185,7 @@ export class FileLeaseRegistry {
       branch_name: row.branch_name ? String(row.branch_name) : null,
       locked_globs: JSON.parse(String(row.locked_globs_json)),
       expires_at: String(row.expires_at),
-      released_at: row.released_at ? String(row.released_at) : null
+      released_at: row.released_at ? String(row.released_at) : null,
     });
   }
 }

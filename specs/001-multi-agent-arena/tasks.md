@@ -218,8 +218,8 @@ Worker B (Council):   T035 [US3] Implement CouncilStateMachine & WeightedVotingR
 
 ## Phase 8: Convergence
 
-- [ ] T047 Auto-decompose approved `DecisionRecord` items into child `TaskTicket` beads in `packages/core/src/engine/council.ts` and extract standalone `apps/web-arena/src/council/DissentPanel.tsx` and `apps/web-arena/src/council/DecisionMinutesModal.tsx` components per US3/AC3, plan.md, and T038 (partial)
-- [ ] T048 Add HTML5 drag-and-drop column/employee assignment plus Goal Ancestry (`parent_ticket_id`), isolated worktree branch badges, and linked Blackboard diff indicators on ticket cards in `apps/web-arena/src/kanban/KanbanBoard.tsx` per FR-005, US2/AC1, and T031 (partial)
-- [ ] T049 Implement `stdio` JSON-RPC proxy transport in `packages/adapters/src/mcp-bridge/mcp-arena-server.ts` and expose `factory-arena mcp-stdio` in `packages/cli/src/index.ts` for IDEs requiring stdio MCP servers per FR-002, contracts/mcp-arena-tools.json, and T018 (partial)
-- [ ] T050 Resolve all Biome lint, import-sorting, a11y keyboard handler (`apps/web-arena/src/App.tsx`), and non-null assertion (`tests/integration/us3-council-deliberation.spec.ts`) diagnostics so `pnpm lint` exits 0 per T003 (partial)
+- [X] T047 Auto-decompose approved `DecisionRecord` items into child `TaskTicket` beads in `packages/core/src/engine/council.ts` and extract standalone `apps/web-arena/src/council/DissentPanel.tsx` and `apps/web-arena/src/council/DecisionMinutesModal.tsx` components per US3/AC3, plan.md, and T038 (partial)
+- [X] T048 Add HTML5 drag-and-drop column/employee assignment plus Goal Ancestry (`parent_ticket_id`), isolated worktree branch badges, and linked Blackboard diff indicators on ticket cards in `apps/web-arena/src/kanban/KanbanBoard.tsx` per FR-005, US2/AC1, and T031 (partial)
+- [X] T049 Implement `stdio` JSON-RPC proxy transport in `packages/adapters/src/mcp-bridge/mcp-arena-server.ts` and expose `factory-arena mcp-stdio` in `packages/cli/src/index.ts` for IDEs requiring stdio MCP servers per FR-002, contracts/mcp-arena-tools.json, and T018 (partial)
+- [X] T050 Resolve all Biome lint, import-sorting, a11y keyboard handler (`apps/web-arena/src/App.tsx`), and non-null assertion (`tests/integration/us3-council-deliberation.spec.ts`) diagnostics so `pnpm lint` exits 0 per T003 (partial)
 

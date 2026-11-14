@@ -23,14 +23,14 @@ export interface ParticipantAdapter {
   disconnect(employeeId: string): Promise<void>;
   sendAssignment(
     employee: SessionEmployee,
-    assignment: AdapterAssignmentPayload
+    assignment: AdapterAssignmentPayload,
   ): Promise<AdapterTurnResult>;
   heartbeat(employeeId: string): Promise<boolean>;
   resolvePermission(
     employeeId: string,
     permissionId: string,
     decision: "allowed" | "denied" | "answered",
-    answerText?: string
+    answerText?: string,
   ): Promise<void>;
   getAgentCard?(employee: SessionEmployee): AgentCard;
 }

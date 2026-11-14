@@ -7,7 +7,7 @@ import {
   type BlackboardArtifact,
   BlackboardArtifactSchema,
   isoNow,
-  prefixedUlid
+  prefixedUlid,
 } from "@factory-arena/protocol";
 import type { EventLedger } from "../storage/event-ledger.js";
 import type { LogCrusher } from "./log-crusher.js";
@@ -19,7 +19,7 @@ export class SharedBlackboardStore {
     private readonly db: DatabaseSync,
     private readonly artifactsDir: string,
     private readonly ledger: EventLedger,
-    private readonly crusher: LogCrusher
+    private readonly crusher: LogCrusher,
   ) {
     mkdirSync(this.artifactsDir, { recursive: true });
   }
@@ -47,7 +47,7 @@ export class SharedBlackboardStore {
 
     const existingCountRow = this.db
       .prepare(
-        `SELECT COUNT(*) AS cnt FROM blackboard_artifacts WHERE COALESCE(room_id,'') = ? AND title = ?`
+        `SELECT COUNT(*) AS cnt FROM blackboard_artifacts WHERE COALESCE(room_id,'') = ? AND title = ?`,
       )
       .get(params.roomId ?? "", params.title) as { cnt: number };
 
@@ -70,14 +70,14 @@ export class SharedBlackboardStore {
       byte_size: byteSize,
       compact_digest: compactDigest,
       version,
-      created_at: createdAt
+      created_at: createdAt,
     });
 
     this.db
       .prepare(
         `INSERT INTO blackboard_artifacts
           (id, room_id, ticket_id, author_session_id, kind, title, mime_type, storage_path, sha256_hash, byte_size, compact_digest, version, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         artifact.id,
@@ -92,7 +92,7 @@ export class SharedBlackboardStore {
         artifact.byte_size,
         artifact.compact_digest,
         artifact.version,
-        artifact.created_at
+        artifact.created_at,
       );
 
     this.ledger.append({
@@ -105,8 +105,8 @@ export class SharedBlackboardStore {
         kind: artifact.kind,
         title: artifact.title,
         byte_size: artifact.byte_size,
-        compact_digest: artifact.compact_digest
-      }
+        compact_digest: artifact.compact_digest,
+      },
     });
 
     return { artifact, pointer: `artifact://${artifact.id}` };
@@ -114,9 +114,9 @@ export class SharedBlackboardStore {
 
   public getArtifact(artifactId: string): { artifact: BlackboardArtifact; content: string } | null {
     const cleanId = artifactId.replace(/^artifact:\/\//, "");
-    const row = this.db
-      .prepare(`SELECT * FROM blackboard_artifacts WHERE id = ?`)
-      .get(cleanId) as Record<string, unknown> | undefined;
+    const row = this.db.prepare("SELECT * FROM blackboard_artifacts WHERE id = ?").get(cleanId) as
+      | Record<string, unknown>
+      | undefined;
 
     if (!row) return null;
     const artifact = this.mapRow(row);
@@ -127,17 +127,17 @@ export class SharedBlackboardStore {
   }
 
   public listArtifacts(filter: { roomId?: string; ticketId?: string } = {}): BlackboardArtifact[] {
-    let sql = `SELECT * FROM blackboard_artifacts WHERE 1=1`;
+    let sql = "SELECT * FROM blackboard_artifacts WHERE 1=1";
     const args: Array<string> = [];
     if (filter.roomId) {
-      sql += ` AND room_id = ?`;
+      sql += " AND room_id = ?";
       args.push(filter.roomId);
     }
     if (filter.ticketId) {
-      sql += ` AND ticket_id = ?`;
+      sql += " AND ticket_id = ?";
       args.push(filter.ticketId);
     }
-    sql += ` ORDER BY created_at DESC`;
+    sql += " ORDER BY created_at DESC";
     const rows = this.db.prepare(sql).all(...args) as Array<Record<string, unknown>>;
     return rows.map((r) => this.mapRow(r));
   }
@@ -156,7 +156,7 @@ export class SharedBlackboardStore {
       byte_size: Number(row.byte_size),
       compact_digest: String(row.compact_digest),
       version: Number(row.version),
-      created_at: String(row.created_at)
+      created_at: String(row.created_at),
     });
   }
 }

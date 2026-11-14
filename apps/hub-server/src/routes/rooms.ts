@@ -1,7 +1,7 @@
-import { Hono } from "hono";
-import { streamSSE } from "hono/streaming";
 import type { ArenaCoreContainer } from "@factory-arena/core";
 import { ProtocolModeSchema, RoomConfigSchema } from "@factory-arena/protocol";
+import { Hono } from "hono";
+import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 
 export function createRoomsRoutes(core: ArenaCoreContainer): Hono {
@@ -12,7 +12,7 @@ export function createRoomsRoutes(core: ArenaCoreContainer): Hono {
       ...r,
       rounds: core.council.listRounds(r.id),
       critiques: core.council.listCritiques(r.id),
-      latest_decision: core.council.getLatestDecision(r.id)
+      latest_decision: core.council.getLatestDecision(r.id),
     }));
     return c.json({ rooms });
   });
@@ -28,7 +28,7 @@ export function createRoomsRoutes(core: ArenaCoreContainer): Hono {
       protocol_mode: ProtocolModeSchema,
       participant_ids: z.array(z.string()).min(2),
       moderator_id: z.string().min(1),
-      config: RoomConfigSchema.partial().optional()
+      config: RoomConfigSchema.partial().optional(),
     });
     const parsed = schema.parse(body);
     const created = core.council.createRoom({
@@ -40,7 +40,7 @@ export function createRoomsRoutes(core: ArenaCoreContainer): Hono {
       protocolMode: parsed.protocol_mode,
       participantIds: parsed.participant_ids,
       moderatorId: parsed.moderator_id,
-      config: parsed.config
+      config: parsed.config,
     });
     return c.json(created, 201);
   });
@@ -55,29 +55,22 @@ export function createRoomsRoutes(core: ArenaCoreContainer): Hono {
         await stream.writeSSE({
           id: String(ev.sequence_no),
           event: ev.event_type,
-          data: JSON.stringify(ev)
+          data: JSON.stringify(ev),
         });
       }
 
       let closed = false;
       const unsubscribe = core.ledger.subscribe((ev) => {
         if (closed || ev.room_id !== roomId) return;
-        if (
-          viewerParticipantId &&
-          ev.visibility === "sealed_author_only" &&
-          ev.actor_session_employee_id !== viewerParticipantId
-        ) {
+        const safeEv = core.ledger.projectEventForViewer(ev, viewerParticipantId);
+        if (!safeEv) {
           return;
         }
-        const safeEv =
-          viewerParticipantId && ev.visibility === "anonymized_peers"
-            ? { ...ev, actor_session_employee_id: "anonymous" }
-            : ev;
 
         void stream.writeSSE({
           id: String(safeEv.sequence_no),
           event: safeEv.event_type,
-          data: JSON.stringify(safeEv)
+          data: JSON.stringify(safeEv),
         });
       });
 

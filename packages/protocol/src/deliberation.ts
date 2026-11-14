@@ -4,7 +4,7 @@ export const ProtocolModeSchema = z.enum([
   "council",
   "adversarial",
   "roundtable",
-  "execution_mesh"
+  "execution_mesh",
 ]);
 export type ProtocolMode = z.infer<typeof ProtocolModeSchema>;
 
@@ -17,19 +17,22 @@ export const RoomStatusSchema = z.enum([
   "awaiting_human_gate",
   "executing",
   "completed",
-  "aborted"
+  "aborted",
 ]);
 export type RoomStatus = z.infer<typeof RoomStatusSchema>;
 
+/** Hard cap on deliberation rounds per room, including director-extended reopenings. */
+export const MAX_DELIBERATION_ROUNDS = 10;
+
 export const RoomConfigSchema = z.object({
-  max_rounds: z.number().int().min(1).max(10).default(3),
+  max_rounds: z.number().int().min(1).max(MAX_DELIBERATION_ROUNDS).default(3),
   turn_timeout_sec: z.number().int().min(5).max(600).default(90),
   quorum_ratio: z.number().min(0.1).max(1).default(0.67),
   tie_breaker: z.enum(["moderator", "human"]).default("human"),
   budget_tokens: z.number().int().min(1000).default(250000),
   max_cost_usd: z.number().min(0).default(10),
   anonymize_proposals: z.boolean().default(true),
-  exclude_self_scoring: z.boolean().default(true)
+  exclude_self_scoring: z.boolean().default(true),
 });
 export type RoomConfig = z.infer<typeof RoomConfigSchema>;
 
@@ -48,7 +51,7 @@ export const WarRoomMeetingSchema = z.object({
   config: RoomConfigSchema,
   consumed_tokens: z.number().int().min(0).default(0),
   consumed_cost_usd: z.number().min(0).default(0),
-  created_at: z.string().datetime()
+  created_at: z.string().datetime(),
 });
 export type WarRoomMeeting = z.infer<typeof WarRoomMeetingSchema>;
 
@@ -60,7 +63,7 @@ export const DeliberationStageSchema = z.enum([
   "critique",
   "rebuttal",
   "vote",
-  "synthesis"
+  "synthesis",
 ]);
 export type DeliberationStage = z.infer<typeof DeliberationStageSchema>;
 
@@ -71,7 +74,7 @@ export const DeliberationRoundSchema = z.object({
   stage: DeliberationStageSchema,
   visibility_state: RoundVisibilityStateSchema,
   started_at: z.string().datetime(),
-  closed_at: z.string().datetime().nullable().optional()
+  closed_at: z.string().datetime().nullable().optional(),
 });
 export type DeliberationRound = z.infer<typeof DeliberationRoundSchema>;
 
@@ -79,7 +82,7 @@ export const CitationRefSchema = z.object({
   path: z.string().min(1),
   line_start: z.number().int().min(1).optional(),
   line_end: z.number().int().min(1).optional(),
-  artifact_id: z.string().optional()
+  artifact_id: z.string().optional(),
 });
 export type CitationRef = z.infer<typeof CitationRefSchema>;
 
@@ -96,7 +99,7 @@ export const TurnSubmissionSchema = z.object({
   prompt_tokens: z.number().int().min(0).default(0),
   completion_tokens: z.number().int().min(0).default(0),
   latency_ms: z.number().int().min(0).default(0),
-  submitted_at: z.string().datetime()
+  submitted_at: z.string().datetime(),
 });
 export type TurnSubmission = z.infer<typeof TurnSubmissionSchema>;
 
@@ -104,7 +107,7 @@ export const RubricScoresSchema = z.object({
   correctness: z.number().int().min(1).max(10),
   security: z.number().int().min(1).max(10),
   maintainability: z.number().int().min(1).max(10),
-  feasibility: z.number().int().min(1).max(10)
+  feasibility: z.number().int().min(1).max(10),
 });
 export type RubricScores = z.infer<typeof RubricScoresSchema>;
 
@@ -114,7 +117,7 @@ export const CritiqueFindingSchema = z
     category: z.enum(["logic", "security", "performance", "edge_case", "architecture"]),
     claim: z.string().min(1),
     evidence_ref: z.string().optional(),
-    is_hypothesis: z.boolean().default(false)
+    is_hypothesis: z.boolean().default(false),
   })
   .superRefine((val, ctx) => {
     if (
@@ -125,7 +128,7 @@ export const CritiqueFindingSchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message:
-          "Critical or high findings require an explicit evidence_ref (file:line or artifact://) or is_hypothesis=true"
+          "Critical or high findings require an explicit evidence_ref (file:line or artifact://) or is_hypothesis=true",
       });
     }
   });
@@ -142,7 +145,7 @@ export const CritiqueSchema = z.object({
   findings: z.array(CritiqueFindingSchema),
   strengths_summary: z.string().default(""),
   blind_spots_summary: z.string().default(""),
-  created_at: z.string().datetime()
+  created_at: z.string().datetime(),
 });
 export type Critique = z.infer<typeof CritiqueSchema>;
 
@@ -154,14 +157,14 @@ export const VoteSchema = z.object({
   ranked_aliases: z.array(z.string()).min(1),
   confidence: z.number().min(0).max(1),
   rationale: z.string().default(""),
-  created_at: z.string().datetime()
+  created_at: z.string().datetime(),
 });
 export type Vote = z.infer<typeof VoteSchema>;
 
 export const DissentEntrySchema = z.object({
   issue: z.string().min(1),
   raised_by_alias: z.string().min(1),
-  revisit_trigger: z.string().min(1)
+  revisit_trigger: z.string().min(1),
 });
 export type DissentEntry = z.infer<typeof DissentEntrySchema>;
 
@@ -174,13 +177,13 @@ export const DecisionRecordSchema = z.object({
     "supermajority",
     "ranked_choice",
     "moderator_tiebreak",
-    "human_override"
+    "human_override",
   ]),
   final_plan_markdown: z.string().min(1),
   adopted_amendments: z.array(z.string()).default([]),
   dissent_log: z.array(DissentEntrySchema),
   human_approved_by: z.string().nullable().optional(),
   approved_at: z.string().datetime().nullable().optional(),
-  created_at: z.string().datetime()
+  created_at: z.string().datetime(),
 });
 export type DecisionRecord = z.infer<typeof DecisionRecordSchema>;

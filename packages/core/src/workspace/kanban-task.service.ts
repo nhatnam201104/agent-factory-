@@ -5,7 +5,7 @@ import {
   type KanbanColumn,
   type TaskTicket,
   TaskTicketSchema,
-  isoNow
+  isoNow,
 } from "@factory-arena/protocol";
 import type { OfficeRosterService } from "../office/office-roster.service.js";
 import type { EventLedger } from "../storage/event-ledger.js";
@@ -16,9 +16,9 @@ export class KanbanTaskService {
   constructor(
     private readonly db: DatabaseSync,
     private readonly roster: OfficeRosterService,
-    private readonly ledger: EventLedger
+    private readonly ledger: EventLedger,
   ) {
-    const row = this.db.prepare(`SELECT COUNT(*) AS cnt FROM task_tickets`).get() as {
+    const row = this.db.prepare("SELECT COUNT(*) AS cnt FROM task_tickets").get() as {
       cnt: number;
     };
     this.seq = 100 + Number(row?.cnt ?? 0);
@@ -52,7 +52,7 @@ export class KanbanTaskService {
       max_retries: 2,
       failure_notes: [],
       created_at: now,
-      updated_at: now
+      updated_at: now,
     });
 
     this.db
@@ -61,7 +61,7 @@ export class KanbanTaskService {
           (id, parent_ticket_id, decision_id, title, description_markdown, acceptance_criteria_json,
            depends_on_tickets_json, kanban_column, priority, assignee_session_id, reviewer_session_ids_json,
            repo_root_path, base_branch, retry_count, max_retries, failure_notes_json, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         ticket.id,
@@ -81,7 +81,7 @@ export class KanbanTaskService {
         ticket.max_retries,
         JSON.stringify(ticket.failure_notes),
         ticket.created_at,
-        ticket.updated_at
+        ticket.updated_at,
       );
 
     if (ticket.assignee_session_id) {
@@ -92,7 +92,7 @@ export class KanbanTaskService {
       roomId: "office-global",
       eventType: "ticket.created",
       actorSessionEmployeeId: ticket.assignee_session_id ?? undefined,
-      payload: { ticket }
+      payload: { ticket },
     });
 
     return ticket;
@@ -104,7 +104,7 @@ export class KanbanTaskService {
       kanban_column?: KanbanColumn;
       assignee_session_id?: string | null;
       reviewer_session_ids?: string[];
-    }
+    },
   ): TaskTicket {
     const existing = this.getTicketById(ticketId);
     if (!existing) {
@@ -123,7 +123,7 @@ export class KanbanTaskService {
       .prepare(
         `UPDATE task_tickets
          SET kanban_column = ?, assignee_session_id = ?, reviewer_session_ids_json = ?, updated_at = ?
-         WHERE id = ?`
+         WHERE id = ?`,
       )
       .run(nextCol, nextAssignee ?? null, JSON.stringify(nextReviewers), now, ticketId);
 
@@ -133,17 +133,21 @@ export class KanbanTaskService {
         roomId: "office-global",
         eventType: "ticket.assigned",
         actorSessionEmployeeId: nextAssignee,
-        payload: { ticket_id: ticketId, assignee_session_id: nextAssignee, kanban_column: nextCol }
+        payload: { ticket_id: ticketId, assignee_session_id: nextAssignee, kanban_column: nextCol },
       });
     } else {
       this.ledger.append({
         roomId: "office-global",
         eventType: "ticket.status_changed",
-        payload: { ticket_id: ticketId, kanban_column: nextCol }
+        payload: { ticket_id: ticketId, kanban_column: nextCol },
       });
     }
 
-    return this.getTicketById(ticketId)!;
+    const updated = this.getTicketById(ticketId);
+    if (!updated) {
+      throw new Error(`TaskTicket disappeared after update: ${ticketId}`);
+    }
+    return updated;
   }
 
   public decomposeEpic(params: {
@@ -176,7 +180,7 @@ export class KanbanTaskService {
         kanban_column: item.assigneeSessionId ? "assigned" : "backlog",
         priority: parent.priority,
         repo_root_path: parent.repo_root_path,
-        base_branch: parent.base_branch
+        base_branch: parent.base_branch,
       });
       created.push(child);
     }
@@ -184,26 +188,26 @@ export class KanbanTaskService {
   }
 
   public getTicketById(id: string): TaskTicket | null {
-    const row = this.db
-      .prepare(`SELECT * FROM task_tickets WHERE id = ?`)
-      .get(id) as Record<string, unknown> | undefined;
+    const row = this.db.prepare("SELECT * FROM task_tickets WHERE id = ?").get(id) as
+      | Record<string, unknown>
+      | undefined;
     return row ? this.mapRow(row) : null;
   }
 
   public listTickets(
-    filter: { assigneeSessionId?: string; kanbanColumn?: KanbanColumn } = {}
+    filter: { assigneeSessionId?: string; kanbanColumn?: KanbanColumn } = {},
   ): TaskTicket[] {
-    let sql = `SELECT * FROM task_tickets WHERE 1=1`;
+    let sql = "SELECT * FROM task_tickets WHERE 1=1";
     const args: string[] = [];
     if (filter.assigneeSessionId) {
-      sql += ` AND assignee_session_id = ?`;
+      sql += " AND assignee_session_id = ?";
       args.push(filter.assigneeSessionId);
     }
     if (filter.kanbanColumn) {
-      sql += ` AND kanban_column = ?`;
+      sql += " AND kanban_column = ?";
       args.push(filter.kanbanColumn);
     }
-    sql += ` ORDER BY created_at ASC`;
+    sql += " ORDER BY created_at ASC";
     const rows = this.db.prepare(sql).all(...args) as Array<Record<string, unknown>>;
     return rows.map((r) => this.mapRow(r));
   }
@@ -227,7 +231,7 @@ export class KanbanTaskService {
       max_retries: Number(row.max_retries),
       failure_notes: JSON.parse(String(row.failure_notes_json)),
       created_at: String(row.created_at),
-      updated_at: String(row.updated_at)
+      updated_at: String(row.updated_at),
     });
   }
 }

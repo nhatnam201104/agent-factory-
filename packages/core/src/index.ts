@@ -14,7 +14,7 @@ import { EventLedger } from "./storage/event-ledger.js";
 import {
   type ArenaStoragePaths,
   openArenaDatabase,
-  resolveStoragePaths
+  resolveStoragePaths,
 } from "./storage/sqlite-db.js";
 import { FileLeaseRegistry } from "./workspace/file-lease-registry.js";
 import { GitWorktreeManager } from "./workspace/git-worktree-manager.js";
@@ -24,6 +24,8 @@ import { RalphRetrySupervisor } from "./workspace/ralph-retry.js";
 export * from "./security/credential-vault.js";
 export * from "./security/secret-scrubber.js";
 export * from "./security/ssrf-guard.js";
+export * from "./security/cli-command-policy.js";
+export * from "./errors.js";
 export * from "./storage/sqlite-db.js";
 export * from "./storage/event-ledger.js";
 export * from "./blackboard/artifact-store.js";
@@ -42,7 +44,7 @@ export {
   CouncilStateMachine,
   AdversarialEngine,
   RoundtableRouter,
-  WeightedVotingResolver
+  WeightedVotingResolver,
 };
 export { LeaseConflictError, globsOverlap } from "./workspace/file-lease-registry.js";
 export type { AnonymizedProposalView } from "./engine/council.js";
@@ -96,7 +98,8 @@ export function createArenaCore(options: {
     blackboard,
     slicer,
     voting,
-    ledger
+    ledger,
+    budget,
   );
   const heartbeats = new HeartbeatScheduler(roster, kanban);
 
@@ -121,6 +124,6 @@ export function createArenaCore(options: {
     close: () => {
       heartbeats.stopAll();
       db.close();
-    }
+    },
   };
 }

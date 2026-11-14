@@ -9,19 +9,19 @@ export interface ArenaBridgeConfig {
   department: "leadership" | "architecture" | "backend" | "frontend" | "security_qa" | "devops";
 }
 
-export function buildIdeMcpRegistration(hubUrl: string = "http://127.0.0.1:4747") {
+export function buildIdeMcpRegistration(hubUrl = "http://127.0.0.1:4747") {
   const clean = hubUrl.replace(/\/+$/, "");
   return {
     mcpServerUrl: `${clean}/mcp`,
     acpEndpointUrl: `${clean}/acp`,
-    webOfficeUrl: clean
+    webOfficeUrl: clean,
   };
 }
 
 export async function checkinIdeSessionToOffice(
   config: ArenaBridgeConfig,
   workspaceUri: string = process.cwd(),
-  fetchImpl: typeof fetch = fetch
+  fetchImpl: typeof fetch = fetch,
 ): Promise<{ employeeId: string; deskSlotId: string }> {
   const { mcpServerUrl } = buildIdeMcpRegistration(config.hubUrl);
   const resp = await fetchImpl(mcpServerUrl, {
@@ -39,10 +39,10 @@ export async function checkinIdeSessionToOffice(
           display_name: `VSCode (${config.employeeCode})`,
           department: config.department,
           job_title: "VS Code Bridge Session Employee",
-          workspace_uri: workspaceUri
-        }
-      }
-    })
+          workspace_uri: workspaceUri,
+        },
+      },
+    }),
   });
 
   if (!resp.ok) {
@@ -52,7 +52,7 @@ export async function checkinIdeSessionToOffice(
   const emp = payload.result?.structuredContent;
   return {
     employeeId: String(emp?.id ?? ""),
-    deskSlotId: String(emp?.desk_slot_id ?? "DESK-IDE-1")
+    deskSlotId: String(emp?.desk_slot_id ?? "DESK-IDE-1"),
   };
 }
 
@@ -60,12 +60,12 @@ export function activate(context: VsCodeLikeContext): {
   registration: ReturnType<typeof buildIdeMcpRegistration>;
 } {
   const registration = buildIdeMcpRegistration(
-    process.env.FACTORY_ARENA_HUB_URL ?? "http://127.0.0.1:4747"
+    process.env.FACTORY_ARENA_HUB_URL ?? "http://127.0.0.1:4747",
   );
   context.subscriptions.push({
     dispose: () => {
       // Cleanly detach status bar observer on window close
-    }
+    },
   });
   return { registration };
 }

@@ -1,12 +1,12 @@
 import { z } from "zod";
-import { AvatarPoseSchema, CapabilitySchema, DepartmentSchema } from "./session-employee.js";
-import { ArtifactKindSchema, IsolationModeSchema } from "./kanban-workspace.js";
 import {
   CitationRefSchema,
   CritiqueFindingSchema,
   DissentEntrySchema,
-  RubricScoresSchema
+  RubricScoresSchema,
 } from "./deliberation.js";
+import { ArtifactKindSchema, IsolationModeSchema } from "./kanban-workspace.js";
+import { AvatarPoseSchema, CapabilitySchema, DepartmentSchema } from "./session-employee.js";
 
 export const MCPCheckinDeskInputSchema = z.object({
   session_fingerprint: z.string().min(1),
@@ -14,7 +14,7 @@ export const MCPCheckinDeskInputSchema = z.object({
   display_name: z.string().optional(),
   department: DepartmentSchema,
   job_title: z.string().min(1),
-  workspace_uri: z.string().optional()
+  workspace_uri: z.string().optional(),
 });
 
 export const MCPReportDeskActivityInputSchema = z.object({
@@ -22,7 +22,7 @@ export const MCPReportDeskActivityInputSchema = z.object({
   avatar_pose: AvatarPoseSchema,
   last_tool_call_summary: z.string().optional(),
   context_fill_pct: z.number().min(0).max(100).optional(),
-  permission_prompt: z.string().optional()
+  permission_prompt: z.string().optional(),
 });
 
 export const MCPJoinRoomInputSchema = z.object({
@@ -30,13 +30,13 @@ export const MCPJoinRoomInputSchema = z.object({
   slug: z.string().regex(/^[a-z0-9-]+$/),
   display_name: z.string().optional(),
   persona_role: z.string().min(1),
-  capabilities: z.array(CapabilitySchema)
+  capabilities: z.array(CapabilitySchema),
 });
 
 export const MCPPollAssignmentInputSchema = z.object({
   room_id: z.string().min(1),
   participant_id: z.string().min(1),
-  wait_timeout_ms: z.number().int().min(0).max(60000).default(25000)
+  wait_timeout_ms: z.number().int().min(0).max(60000).default(25000),
 });
 
 export const MCPSubmitProposalInputSchema = z.object({
@@ -45,7 +45,7 @@ export const MCPSubmitProposalInputSchema = z.object({
   participant_id: z.string().min(1),
   summary: z.string().min(1).max(1500),
   content_markdown: z.string().min(1),
-  citations: z.array(CitationRefSchema).optional()
+  citations: z.array(CitationRefSchema).optional(),
 });
 
 export const MCPSubmitCritiqueInputSchema = z.object({
@@ -56,7 +56,7 @@ export const MCPSubmitCritiqueInputSchema = z.object({
   rubric_scores: RubricScoresSchema,
   findings: z.array(CritiqueFindingSchema),
   strengths_summary: z.string().optional(),
-  blind_spots_summary: z.string().optional()
+  blind_spots_summary: z.string().optional(),
 });
 
 export const MCPCastVoteInputSchema = z.object({
@@ -65,7 +65,7 @@ export const MCPCastVoteInputSchema = z.object({
   voter_id: z.string().min(1),
   ranked_aliases: z.array(z.string()).min(1),
   confidence: z.number().min(0).max(1),
-  rationale: z.string().optional()
+  rationale: z.string().optional(),
 });
 
 export const MCPPublishDecisionInputSchema = z.object({
@@ -74,7 +74,7 @@ export const MCPPublishDecisionInputSchema = z.object({
   winning_alias: z.string().min(1),
   final_plan_markdown: z.string().min(1),
   adopted_amendments: z.array(z.string()).optional(),
-  dissent_log: z.array(DissentEntrySchema)
+  dissent_log: z.array(DissentEntrySchema),
 });
 
 export const MCPPublishArtifactInputSchema = z.object({
@@ -83,7 +83,7 @@ export const MCPPublishArtifactInputSchema = z.object({
   kind: ArtifactKindSchema,
   title: z.string().min(1),
   content: z.string().min(1),
-  compact_digest: z.string().max(600)
+  compact_digest: z.string().max(600),
 });
 
 export const MCPClaimBeadInputSchema = z.object({
@@ -91,7 +91,7 @@ export const MCPClaimBeadInputSchema = z.object({
   bead_id: z.string().min(1),
   participant_id: z.string().min(1),
   isolation_mode: IsolationModeSchema,
-  locked_globs: z.array(z.string()).optional()
+  locked_globs: z.array(z.string()).optional(),
 });
 
 export const ARENA_MCP_TOOL_NAMES = [
@@ -104,5 +104,5 @@ export const ARENA_MCP_TOOL_NAMES = [
   "arena_cast_vote",
   "arena_publish_decision",
   "arena_publish_artifact",
-  "arena_claim_bead"
+  "arena_claim_bead",
 ] as const;

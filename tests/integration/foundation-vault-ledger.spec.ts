@@ -10,7 +10,7 @@ describe("Foundation: AES-256-GCM CredentialVault & Immutable JSONL EventLedger 
     const superSecret = "sk-live-SUPER-SECRET-VAULT-KEY-9988776655";
     const core = createArenaCore({
       stateDir: dir,
-      masterPassphrase: "unit-test-master-passphrase"
+      masterPassphrase: "unit-test-master-passphrase",
     });
 
     try {
@@ -19,7 +19,7 @@ describe("Foundation: AES-256-GCM CredentialVault & Immutable JSONL EventLedger 
         provider_kind: "openai_compatible",
         raw_secret: superSecret,
         rate_limit_rpm: 60,
-        max_cost_usd: 15
+        max_cost_usd: 15,
       });
 
       expect(meta.id).toMatch(/^cred_/);
@@ -33,13 +33,13 @@ describe("Foundation: AES-256-GCM CredentialVault & Immutable JSONL EventLedger 
         eventType: "room.created",
         payload: {
           note: `Accidental secret echo: ${superSecret}`,
-          raw_secret: superSecret
-        }
+          raw_secret: superSecret,
+        },
       });
       const ev2 = core.ledger.append({
         roomId: "room-sec-test",
         eventType: "round.started",
-        payload: { round: 1 }
+        payload: { round: 1 },
       });
 
       expect(ev1.sequence_no).toBe(1);

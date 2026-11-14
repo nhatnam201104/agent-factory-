@@ -1,219 +1,228 @@
-import type { PermissionRequest, SessionEmployee } from "@factory-arena/protocol";
-import React, { useEffect, useRef, useState } from "react";
-import * as THREE from "three";
-import { type AvatarSceneEntry, createDeskAndEmployeeAvatar } from "./EmployeeAvatar.js";
-import { buildGlassWarRoom } from "./GlassWarRoom.js";
+import type { PermissionRequest, SessionEmployee, TaskTicket } from "@factory-arena/protocol";
+import type React from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { type AgentActions, AgentQuickPanel } from "./AgentQuickPanel.js";
+import { AgentTag } from "./AgentTag.js";
+import {
+  type AgentActivity,
+  currentTicketFor,
+  deriveAgentStatus,
+  statusStyle,
+  workingEmployeeIds,
+} from "./agentStatus.js";
+import { type SceneRuntime, WebGLUnavailableError, startOfficeScene } from "./sceneRuntime.js";
+import "./office-scene.css";
 
 export interface OfficeScene3DProps {
   employees: SessionEmployee[];
+  tickets: TaskTicket[];
   pendingPermissions: PermissionRequest[];
   selectedEmployeeId: string | null;
   onSelectEmployee: (id: string) => void;
+  onDropTicketOnEmployee?: (ticketId: string, employeeId: string) => void;
+  actions: AgentActions;
 }
 
-export function OfficeScene3D({
-  employees,
-  pendingPermissions,
-  selectedEmployeeId,
-  onSelectEmployee
-}: OfficeScene3DProps) {
+const LEGEND_ORDER: readonly AgentActivity[] = [
+  "working",
+  "needs_approval",
+  "meeting",
+  "idle",
+  "offline",
+];
+const LEGEND = LEGEND_ORDER.map(statusStyle);
+/** Panel width + its 12px margin; below the mobile breakpoint the panel docks at the bottom. */
+const PANEL_INSET_PX = 342;
+const PANEL_DOCKED_BREAKPOINT_PX = 640;
+
+type CssVars = React.CSSProperties & Record<`--${string}`, string>;
+
+export function OfficeScene3D(props: OfficeScene3DProps) {
+  const {
+    employees,
+    tickets,
+    pendingPermissions,
+    selectedEmployeeId,
+    onDropTicketOnEmployee,
+    actions,
+  } = props;
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const employeesRef = useRef<SessionEmployee[]>(employees);
-  const permsRef = useRef<PermissionRequest[]>(pendingPermissions);
-  const entriesRef = useRef<Map<string, AvatarSceneEntry>>(new Map());
-  const sceneRef = useRef<THREE.Scene | null>(null);
-  const [badgeCoords, setBadgeCoords] = useState<
-    Record<string, { x: number; y: number }>
-  >({});
+  const latest = useRef(props);
+  latest.current = props;
+  const [tagElements] = useState(() => new Map<string, HTMLElement>());
+  const runtimeRef = useRef<SceneRuntime | null>(null);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [zoomPct, setZoomPct] = useState(100);
+  const [webglFailed, setWebglFailed] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const workingIds = workingEmployeeIds(tickets);
+  const workingRef = useRef(workingIds);
+  workingRef.current = workingIds;
 
-  employeesRef.current = employees;
-  permsRef.current = pendingPermissions;
+  const openAgent = useCallback((id: string) => {
+    latest.current.onSelectEmployee(id);
+    setPanelOpen(true);
+  }, []);
+  const closePanel = useCallback(() => setPanelOpen(false), []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     const wrap = wrapRef.current;
     if (!canvas || !wrap) return;
-
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x060c18);
-    sceneRef.current = scene;
-
-    const width = wrap.clientWidth || 800;
-    const height = 470;
-    const camera = new THREE.PerspectiveCamera(42, width / height, 0.1, 90);
-    let renderer: THREE.WebGLRenderer | null = null;
+    let runtime: SceneRuntime;
     try {
-      renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "low-power" });
-      renderer.setSize(width, height);
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    } catch {
-      // Graceful headless WebGL fallback for CI environments without GPU
+      runtime = startOfficeScene({
+        canvas,
+        wrap,
+        getEmployees: () => latest.current.employees,
+        getPermissions: () => latest.current.pendingPermissions,
+        getSelectedId: () => latest.current.selectedEmployeeId,
+        getWorkingIds: () => workingRef.current,
+        tagElements,
+        onPick: openAgent,
+        onZoomChange: (relative) => setZoomPct(Math.round(relative * 100)),
+      });
+    } catch (error: unknown) {
+      // Always keep the office usable via the flat roster, but surface real bugs loudly.
+      if (!(error instanceof WebGLUnavailableError)) {
+        console.error("[OfficeScene3D] failed to build the 3D office", error);
+      }
+      setWebglFailed(true);
       return;
     }
-
-    scene.add(new THREE.AmbientLight(0x9cb8ff, 0.88));
-    const sun = new THREE.DirectionalLight(0xffffff, 1.05);
-    sun.position.set(10, 18, 12);
-    scene.add(sun);
-
-    const floor = new THREE.Mesh(
-      new THREE.BoxGeometry(20, 0.28, 14),
-      new THREE.MeshStandardMaterial({ color: 0x0f182c, roughness: 0.88 })
-    );
-    floor.position.y = -0.14;
-    floor.matrixAutoUpdate = false;
-    floor.updateMatrix();
-    scene.add(floor);
-
-    const grid = new THREE.GridHelper(20, 20, 0x263864, 0x172443);
-    grid.position.y = 0.01;
-    scene.add(grid);
-
-    buildGlassWarRoom(scene);
-
-    let dragging = false;
-    let prevX = 0;
-    let prevY = 0;
-    let theta = 0.5;
-    let phi = 0.88;
-    let radius = 19.2;
-
-    const syncCamera = () => {
-      camera.position.x = radius * Math.sin(phi) * Math.sin(theta);
-      camera.position.y = radius * Math.cos(phi);
-      camera.position.z = radius * Math.sin(phi) * Math.cos(theta);
-      camera.lookAt(-0.5, 0.6, 0);
-    };
-    syncCamera();
-
-    const onDown = (e: PointerEvent) => {
-      dragging = true;
-      prevX = e.clientX;
-      prevY = e.clientY;
-    };
-    const onUp = () => {
-      dragging = false;
-    };
-    const onMove = (e: PointerEvent) => {
-      if (!dragging) return;
-      theta -= (e.clientX - prevX) * 0.007;
-      phi = Math.max(0.38, Math.min(1.32, phi - (e.clientY - prevY) * 0.006));
-      prevX = e.clientX;
-      prevY = e.clientY;
-      syncCamera();
-    };
-    canvas.addEventListener("pointerdown", onDown);
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointermove", onMove);
-
-    let animId = 0;
-    let lastFrameMs = 0;
-    const clock = new THREE.Clock();
-
-    const tick = (nowMs: number) => {
-      animId = requestAnimationFrame(tick);
-      // Throttle background/hidden tab rendering to <5% idle CPU (T045)
-      const minDelta = document.hidden ? 500 : 1000 / 30;
-      if (nowMs - lastFrameMs < minDelta) return;
-      lastFrameMs = nowMs;
-
-      const t = clock.getElapsedTime();
-      const currentEmployees = employeesRef.current;
-      const pendingByEmp = new Set(permsRef.current.map((p) => p.session_employee_id));
-
-      currentEmployees.forEach((emp, idx) => {
-        if (!entriesRef.current.has(emp.id)) {
-          entriesRef.current.set(emp.id, createDeskAndEmployeeAvatar(scene, emp, idx));
-        }
-      });
-
-      const nextCoords: Record<string, { x: number; y: number }> = {};
-      const curWidth = wrap.clientWidth || 800;
-
-      currentEmployees.forEach((emp, idx) => {
-        const entry = entriesRef.current.get(emp.id);
-        if (!entry) return;
-        const inMeeting =
-          emp.spatial_zone === "at_war_room_table" || emp.spatial_zone === "walking_to_war_room";
-        const target = inMeeting ? entry.warRoomPos : entry.deskPos;
-
-        entry.group.position.x += (target.x - entry.group.position.x) * 0.08;
-        entry.group.position.z += (target.z - entry.group.position.z) * 0.08;
-
-        const dist = Math.hypot(
-          target.x - entry.group.position.x,
-          target.z - entry.group.position.z
-        );
-        entry.group.position.y = dist > 0.12 ? Math.abs(Math.sin(t * 9 + idx)) * 0.16 : 0;
-
-        const hasHandRaised =
-          emp.avatar_pose === "hand_raised" || pendingByEmp.has(emp.id);
-        if (hasHandRaised) {
-          entry.rightArm.position.y = 1.42 + Math.sin(t * 6) * 0.08;
-          entry.beacon.visible = true;
-        } else {
-          entry.rightArm.position.y =
-            0.88 + (emp.avatar_pose === "typing_code" ? Math.sin(t * 13 + idx) * 0.05 : 0);
-          entry.beacon.visible = inMeeting;
-        }
-
-        const proj = new THREE.Vector3(
-          entry.group.position.x,
-          entry.group.position.y + 2.1,
-          entry.group.position.z
-        ).project(camera);
-        nextCoords[emp.id] = {
-          x: (proj.x * 0.5 + 0.5) * curWidth,
-          y: (-proj.y * 0.5 + 0.5) * height
-        };
-      });
-
-      setBadgeCoords(nextCoords);
-      renderer?.render(scene, camera);
-    };
-
-    animId = requestAnimationFrame(tick);
+    runtimeRef.current = runtime;
     return () => {
-      cancelAnimationFrame(animId);
-      canvas.removeEventListener("pointerdown", onDown);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointermove", onMove);
-      renderer?.dispose();
+      runtime.dispose();
+      runtimeRef.current = null;
     };
+  }, [openAgent, tagElements]);
+
+  const pendingIds = new Set(pendingPermissions.map((p) => p.session_employee_id));
+  const statuses = new Map(
+    employees.map((e) => [e.id, deriveAgentStatus(e, pendingIds, workingIds)]),
+  );
+  const counts = new Map<AgentActivity, number>();
+  for (const s of statuses.values()) counts.set(s.activity, (counts.get(s.activity) ?? 0) + 1);
+  const panelEmployee = panelOpen ? employees.find((e) => e.id === selectedEmployeeId) : undefined;
+  const hasPanel = Boolean(panelEmployee);
+
+  // Slide the framing left while the panel is open so agents on the right stay reachable.
+  useEffect(() => {
+    const docked = (wrapRef.current?.clientWidth ?? 0) < PANEL_DOCKED_BREAKPOINT_PX;
+    runtimeRef.current?.setRightInset(hasPanel && !docked ? PANEL_INSET_PX : 0);
+  }, [hasPanel]);
+
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(document.fullscreenElement === wrapRef.current);
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
   }, []);
 
-  const pendingEmpSet = new Set(pendingPermissions.map((p) => p.session_employee_id));
+  const toggleFullscreen = () => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const request = document.fullscreenElement
+      ? document.exitFullscreen()
+      : wrap.requestFullscreen();
+    request.catch((error: unknown) => {
+      console.error("[OfficeScene3D] fullscreen request was rejected", error);
+    });
+  };
 
   return (
-    <div className="viewport-box" ref={wrapRef} data-testid="office-3d-viewport">
-      <canvas ref={canvasRef} style={{ width: "100%", height: 470, display: "block" }} />
-      {employees.map((emp) => {
-        const pos = badgeCoords[emp.id] ?? { x: 120, y: 80 };
-        const handRaised = emp.avatar_pose === "hand_raised" || pendingEmpSet.has(emp.id);
-        const icon = handRaised
-          ? "✋ Cần duyệt"
-          : emp.spatial_zone === "at_war_room_table"
-            ? "⚖️ Đang họp"
-            : "💻 Tại bàn";
-        return (
+    <div
+      className={`office-viewport${webglFailed ? " is-flat" : ""}`}
+      ref={wrapRef}
+      data-testid="office-3d-viewport"
+    >
+      <canvas
+        ref={canvasRef}
+        className="office-canvas"
+        aria-label="Văn phòng 3D: kéo để xoay, cuộn để zoom, bấm vào nhân viên để xem và giao việc"
+      />
+
+      <div className="office-tags">
+        {employees.map((emp) => {
+          const status = statuses.get(emp.id) ?? deriveAgentStatus(emp, pendingIds);
+          return (
+            <AgentTag
+              key={emp.id}
+              employee={emp}
+              status={status}
+              currentTicket={currentTicketFor(emp, tickets)}
+              selected={selectedEmployeeId === emp.id}
+              tagRef={(el) => {
+                if (el) tagElements.set(emp.id, el);
+                else tagElements.delete(emp.id);
+              }}
+              onSelect={openAgent}
+              onDropTicket={onDropTicketOnEmployee}
+            />
+          );
+        })}
+      </div>
+
+      <div className="office-hud">
+        <span className="office-hud__title">🏡 Studio · {employees.length} agent</span>
+        <ul className="office-legend" aria-label="Chú giải trạng thái">
+          {LEGEND.map((item) => (
+            <li key={item.activity} style={{ "--status": item.css } as CssVars}>
+              <span className="office-legend__dot" aria-hidden="true" />
+              {item.label}
+              <strong>{counts.get(item.activity) ?? 0}</strong>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      {webglFailed ? null : (
+        <div className="office-controls">
+          <span>Kéo để xoay · Cuộn để zoom · Bấm vào agent để giao việc</span>
+          <div className="zoom-group" aria-label="Thu phóng">
+            <button
+              type="button"
+              aria-label="Thu nhỏ"
+              data-testid="office-zoom-out"
+              onClick={() => runtimeRef.current?.zoomOut()}
+            >
+              −
+            </button>
+            <output className="zoom-group__level" data-testid="office-zoom-level">
+              {zoomPct}%
+            </output>
+            <button
+              type="button"
+              aria-label="Phóng to"
+              data-testid="office-zoom-in"
+              onClick={() => runtimeRef.current?.zoomIn()}
+            >
+              +
+            </button>
+          </div>
+          <button type="button" onClick={() => runtimeRef.current?.resetView()}>
+            ⟲ Góc nhìn
+          </button>
           <button
             type="button"
-            key={emp.id}
-            data-testid={`employee-badge-${emp.employee_code}`}
-            className={`emp-floating-badge${selectedEmployeeId === emp.id ? " selected" : ""}${
-              handRaised ? " hand-raised" : ""
-            }`}
-            style={{ left: pos.x, top: pos.y }}
-            onClick={() => onSelectEmployee(emp.id)}
+            data-testid="office-fullscreen"
+            aria-pressed={isFullscreen}
+            onClick={toggleFullscreen}
           >
-            <strong>{emp.display_name}</strong>{" "}
-            <span style={{ color: "var(--muted)" }}>
-              [{emp.employee_code}] {icon}
-            </span>
+            {isFullscreen ? "⤡ Thoát toàn màn hình" : "⛶ Toàn màn hình"}
           </button>
-        );
-      })}
+        </div>
+      )}
+
+      {panelEmployee ? (
+        <AgentQuickPanel
+          employee={panelEmployee}
+          tickets={tickets}
+          pendingPermissions={pendingPermissions}
+          actions={actions}
+          onClose={closePanel}
+        />
+      ) : null}
     </div>
   );
 }

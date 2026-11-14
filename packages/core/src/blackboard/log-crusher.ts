@@ -3,11 +3,14 @@ const NOISE_PATTERNS = [
   /^Progress:\s+resolved\s+\d+/i,
   /^Downloading\s+\S+/i,
   /^\s*✓\s+\d+\s+modules transformed/i,
-  /^\s*\.\.\.\s*\d+\s+more lines/i
+  /^\s*\.\.\.\s*\d+\s+more lines/i,
 ];
 
 export class LogCrusher {
-  public crush(rawText: string, maxLines: number = 60): {
+  public crush(
+    rawText: string,
+    maxLines = 60,
+  ): {
     compressed: string;
     originalBytes: number;
     compressedBytes: number;
@@ -36,7 +39,7 @@ export class LogCrusher {
       finalLines = [
         ...head,
         `... [LogCrusher omitted ${skippedCount} noisy/intermediate lines] ...`,
-        ...tail
+        ...tail,
       ];
     } else if (skippedCount > 0) {
       finalLines.push(`[LogCrusher filtered ${skippedCount} noise lines]`);
@@ -46,7 +49,7 @@ export class LogCrusher {
     return {
       compressed,
       originalBytes,
-      compressedBytes: Buffer.byteLength(compressed, "utf8")
+      compressedBytes: Buffer.byteLength(compressed, "utf8"),
     };
   }
 }

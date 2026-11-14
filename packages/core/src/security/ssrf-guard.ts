@@ -1,10 +1,6 @@
 import { isIP } from "node:net";
 
-const BLOCKED_HOSTNAMES = new Set([
-  "localhost",
-  "metadata.google.internal",
-  "metadata.azure.com"
-]);
+const BLOCKED_HOSTNAMES = new Set(["localhost", "metadata.google.internal", "metadata.azure.com"]);
 
 function isPrivateIPv4(ip: string): boolean {
   const parts = ip.split(".").map((n) => Number(n));
@@ -34,7 +30,7 @@ function isPrivateIPv6(ip: string): boolean {
 
 export function assertSafeRemoteUrl(
   rawUrl: string,
-  options: { allowLoopbackForLocalAgent?: boolean } = {}
+  options: { allowLoopbackForLocalAgent?: boolean } = {},
 ): URL {
   let parsed: URL;
   try {

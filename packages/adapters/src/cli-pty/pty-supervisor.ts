@@ -1,11 +1,18 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
-import type { ArenaCoreContainer } from "@factory-arena/core";
+import { type ArenaCoreContainer, assertAllowedCliCommand } from "@factory-arena/core";
 import type { SessionEmployee } from "@factory-arena/protocol";
 import type {
   AdapterAssignmentPayload,
   AdapterTurnResult,
-  ParticipantAdapter
+  ParticipantAdapter,
 } from "../adapter.interface.js";
+
+/** Hub-defined keep-alive process used when an employee has no CLI configured. */
+const IDLE_PLACEHOLDER_COMMAND: readonly string[] = [
+  process.execPath,
+  "-e",
+  "process.stdin.resume()",
+];
 
 export class CLIPtyAdapter implements ParticipantAdapter {
   public readonly transportType = "cli_pty" as const;
@@ -14,15 +21,21 @@ export class CLIPtyAdapter implements ParticipantAdapter {
 
   constructor(
     private readonly core: ArenaCoreContainer,
-    private readonly permissionWaitThresholdMs: number = 30000
+    private readonly permissionWaitThresholdMs: number = 30000,
   ) {}
 
-  public async connect(
-    employee: SessionEmployee,
-    command: string[] = [process.execPath, "-e", "process.stdin.resume()"]
-  ): Promise<void> {
+  public async connect(employee: SessionEmployee, command?: string[]): Promise<void> {
     if (this.processes.has(employee.id)) return;
-    const [bin, ...args] = command;
+    const requested =
+      command && command.length > 0
+        ? command
+        : employee.cli_command && employee.cli_command.length > 0
+          ? employee.cli_command
+          : undefined;
+    // Re-check at spawn time: rows written before the policy existed must not bypass it.
+    if (requested) assertAllowedCliCommand(requested);
+    const effectiveCommand = requested ?? IDLE_PLACEHOLDER_COMMAND;
+    const [bin, ...args] = effectiveCommand;
     const proc = spawn(bin, args, { stdio: "pipe" });
     proc.stdout.on("data", (chunk: Buffer) => {
       const text = chunk.toString("utf8").trim();
@@ -30,7 +43,7 @@ export class CLIPtyAdapter implements ParticipantAdapter {
         this.core.roster.reportDeskActivity({
           employeeId: employee.id,
           avatarPose: "hand_raised",
-          permissionPrompt: `CLI session waiting confirmation: ${text.slice(0, 180)}`
+          permissionPrompt: `CLI session waiting confirmation: ${text.slice(0, 180)}`,
         });
       }
     });
@@ -55,17 +68,17 @@ export class CLIPtyAdapter implements ParticipantAdapter {
 
   public async sendAssignment(
     employee: SessionEmployee,
-    assignment: AdapterAssignmentPayload
+    assignment: AdapterAssignmentPayload,
   ): Promise<AdapterTurnResult> {
     const proc = this.processes.get(employee.id);
-    if (proc && proc.stdin.writable) {
+    if (proc?.stdin.writable) {
       proc.stdin.write(`${JSON.stringify({ prompt: assignment.prompt })}\n`);
     }
     const timer = setTimeout(() => {
       this.core.roster.reportDeskActivity({
         employeeId: employee.id,
         avatarPose: "hand_raised",
-        permissionPrompt: `CLI agent ${employee.employee_code} idle > ${this.permissionWaitThresholdMs}ms (possible hidden permission prompt)`
+        permissionPrompt: `CLI agent ${employee.employee_code} idle > ${this.permissionWaitThresholdMs}ms (possible hidden permission prompt)`,
       });
     }, this.permissionWaitThresholdMs);
     timer.unref();
@@ -73,11 +86,11 @@ export class CLIPtyAdapter implements ParticipantAdapter {
 
     return {
       contentMarkdown: `Dispatched prompt to local CLI agent ${employee.employee_code}`,
-      summary: `CLI task dispatched`,
+      summary: "CLI task dispatched",
       promptTokens: 0,
       completionTokens: 0,
       estimatedCostUsd: 0,
-      latencyMs: 5
+      latencyMs: 5,
     };
   }
 
@@ -85,10 +98,10 @@ export class CLIPtyAdapter implements ParticipantAdapter {
     employeeId: string,
     permissionId: string,
     decision: "allowed" | "denied" | "answered",
-    answerText?: string
+    answerText?: string,
   ): Promise<void> {
     const proc = this.processes.get(employeeId);
-    if (proc && proc.stdin.writable) {
+    if (proc?.stdin.writable) {
       const reply = answerText ?? (decision === "allowed" ? "y\n" : "n\n");
       proc.stdin.write(reply.endsWith("\n") ? reply : `${reply}\n`);
     }

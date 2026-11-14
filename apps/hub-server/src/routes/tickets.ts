@@ -1,11 +1,11 @@
-import { Hono } from "hono";
 import { type ArenaCoreContainer, LeaseConflictError } from "@factory-arena/core";
 import {
   ArtifactKindSchema,
   CreateTicketInputSchema,
   IsolationModeSchema,
-  KanbanColumnSchema
+  KanbanColumnSchema,
 } from "@factory-arena/protocol";
+import { Hono } from "hono";
 import { z } from "zod";
 
 export function createTicketsAndArtifactsRoutes(core: ArenaCoreContainer): Hono {
@@ -16,7 +16,8 @@ export function createTicketsAndArtifactsRoutes(core: ArenaCoreContainer): Hono 
     const colRaw = c.req.query("kanbanColumn");
     const kanbanColumn = colRaw ? KanbanColumnSchema.parse(colRaw) : undefined;
     return c.json({
-      tickets: core.kanban.listTickets({ assigneeSessionId, kanbanColumn })
+      tickets: core.kanban.listTickets({ assigneeSessionId, kanbanColumn }),
+      active_leases: core.leases.listActiveLeases(),
     });
   });
 
@@ -33,7 +34,7 @@ export function createTicketsAndArtifactsRoutes(core: ArenaCoreContainer): Hono 
     const patchSchema = z.object({
       kanban_column: KanbanColumnSchema.optional(),
       assignee_session_id: z.string().nullable().optional(),
-      reviewer_session_ids: z.array(z.string()).optional()
+      reviewer_session_ids: z.array(z.string()).optional(),
     });
     const patch = patchSchema.parse(body);
     const updated = core.kanban.updateTicket(ticketId, patch);
@@ -49,7 +50,7 @@ export function createTicketsAndArtifactsRoutes(core: ArenaCoreContainer): Hono 
       isolation_mode: IsolationModeSchema,
       locked_globs: z.array(z.string()).optional(),
       repo_root_path: z.string().optional(),
-      ttl_seconds: z.number().int().positive().default(600)
+      ttl_seconds: z.number().int().positive().default(600),
     });
     const parsed = schema.parse(body);
     const emp = core.roster.getEmployeeById(parsed.participant_id);
@@ -71,7 +72,7 @@ export function createTicketsAndArtifactsRoutes(core: ArenaCoreContainer): Hono 
         baseBranch: ticket?.base_branch ?? room?.base_branch,
         isolationMode: parsed.isolation_mode,
         lockedGlobs: parsed.locked_globs,
-        ttlSeconds: parsed.ttl_seconds
+        ttlSeconds: parsed.ttl_seconds,
       });
       return c.json({ lease }, 200);
     } catch (err) {
@@ -79,9 +80,9 @@ export function createTicketsAndArtifactsRoutes(core: ArenaCoreContainer): Hono 
         return c.json(
           {
             error: err.message,
-            conflicting_lease: err.conflictingLease
+            conflicting_lease: err.conflictingLease,
           },
-          409
+          409,
         );
       }
       throw err;
@@ -103,7 +104,7 @@ export function createTicketsAndArtifactsRoutes(core: ArenaCoreContainer): Hono 
       kind: ArtifactKindSchema,
       title: z.string().min(1),
       content: z.string().min(1),
-      compact_digest: z.string().max(600)
+      compact_digest: z.string().max(600),
     });
     const parsed = schema.parse(body);
     const out = core.blackboard.publishArtifact({
@@ -113,7 +114,7 @@ export function createTicketsAndArtifactsRoutes(core: ArenaCoreContainer): Hono 
       kind: parsed.kind,
       title: parsed.title,
       content: parsed.content,
-      compactDigest: parsed.compact_digest
+      compactDigest: parsed.compact_digest,
     });
     return c.json(out, 201);
   });

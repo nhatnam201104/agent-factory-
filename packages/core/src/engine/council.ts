@@ -10,10 +10,12 @@ import {
   type DeliberationRound,
   DeliberationRoundSchema,
   type DissentEntry,
+  MAX_DELIBERATION_ROUNDS,
   type ProtocolMode,
   type RoomConfig,
   RoomConfigSchema,
   type RubricScores,
+  type TaskTicket,
   type TurnSubmission,
   TurnSubmissionSchema,
   type Vote,
@@ -21,20 +23,23 @@ import {
   type WarRoomMeeting,
   WarRoomMeetingSchema,
   isoNow,
-  prefixedUlid
+  prefixedUlid,
 } from "@factory-arena/protocol";
 import {
   INLINE_PAYLOAD_LIMIT_BYTES,
-  type SharedBlackboardStore
+  type SharedBlackboardStore,
 } from "../blackboard/artifact-store.js";
 import {
   type ContextSliceResult,
   type PromptContextSlicer,
-  estimateTokens
+  estimateTokens,
 } from "../blackboard/context-slicer.js";
+import { ArenaClientError } from "../errors.js";
 import type { OfficeRosterService } from "../office/office-roster.service.js";
+import type { PayrollBudgetGuard } from "../office/payroll-budget.service.js";
 import type { EventLedger } from "../storage/event-ledger.js";
 import type { KanbanTaskService } from "../workspace/kanban-task.service.js";
+import { parseStoredRoomConfig } from "./room-config.js";
 import type { VoteTallyResult, WeightedVotingResolver } from "./voting.js";
 
 function fisherYatesShuffle<T>(items: T[]): T[] {
@@ -64,7 +69,8 @@ export class CouncilStateMachine {
     private readonly blackboard: SharedBlackboardStore,
     private readonly slicer: PromptContextSlicer,
     private readonly voting: WeightedVotingResolver,
-    private readonly ledger: EventLedger
+    private readonly ledger: EventLedger,
+    private readonly budget?: PayrollBudgetGuard,
   ) {}
 
   public createRoom(params: {
@@ -97,7 +103,7 @@ export class CouncilStateMachine {
       config,
       consumed_tokens: 0,
       consumed_cost_usd: 0,
-      created_at: createdAt
+      created_at: createdAt,
     });
 
     this.db
@@ -105,7 +111,7 @@ export class CouncilStateMachine {
         `INSERT INTO war_room_meetings
           (id, title, problem_statement, linked_ticket_id, repo_root_path, base_branch, protocol_mode,
            status, participant_ids_json, moderator_id, active_guidance_json, config_json, consumed_tokens, consumed_cost_usd, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)`,
       )
       .run(
         room.id,
@@ -120,7 +126,7 @@ export class CouncilStateMachine {
         room.moderator_id,
         JSON.stringify(room.active_guidance),
         JSON.stringify(room.config),
-        room.created_at
+        room.created_at,
       );
 
     this.roster.moveEmployeesToZone(params.participantIds, "at_war_room_table", "speaking");
@@ -132,7 +138,7 @@ export class CouncilStateMachine {
     this.ledger.append({
       roomId: room.id,
       eventType: "room.created",
-      payload: { room }
+      payload: { room },
     });
 
     const round1 = this.startRound(room.id, 1, "proposal", "sealed");
@@ -143,7 +149,7 @@ export class CouncilStateMachine {
     roomId: string,
     roundNumber: number,
     stage: DeliberationRound["stage"],
-    visibilityState: DeliberationRound["visibility_state"]
+    visibilityState: DeliberationRound["visibility_state"],
   ): DeliberationRound {
     const round = DeliberationRoundSchema.parse({
       id: prefixedUlid("rnd"),
@@ -152,13 +158,13 @@ export class CouncilStateMachine {
       stage,
       visibility_state: visibilityState,
       started_at: isoNow(),
-      closed_at: null
+      closed_at: null,
     });
 
     this.db
       .prepare(
         `INSERT INTO deliberation_rounds (id, room_id, round_number, stage, visibility_state, started_at, closed_at)
-         VALUES (?, ?, ?, ?, ?, ?, NULL)`
+         VALUES (?, ?, ?, ?, ?, ?, NULL)`,
       )
       .run(
         round.id,
@@ -166,13 +172,13 @@ export class CouncilStateMachine {
         round.round_number,
         round.stage,
         round.visibility_state,
-        round.started_at
+        round.started_at,
       );
 
     this.ledger.append({
       roomId,
       eventType: "round.started",
-      payload: { round }
+      payload: { round },
     });
 
     return round;
@@ -195,10 +201,14 @@ export class CouncilStateMachine {
     if (!room.participant_ids.includes(params.sessionEmployeeId)) {
       throw new Error(`Employee ${params.sessionEmployeeId} is not a participant in ${room.id}`);
     }
+    this.budget?.assertWithinBudget({
+      sessionEmployeeId: params.sessionEmployeeId,
+      roomId: room.id,
+    });
 
     const existingMine = this.db
       .prepare(
-        `SELECT id FROM turn_submissions WHERE round_id = ? AND session_employee_id = ? LIMIT 1`
+        "SELECT id FROM turn_submissions WHERE round_id = ? AND session_employee_id = ? LIMIT 1",
       )
       .get(round.id, params.sessionEmployeeId) as { id: string } | undefined;
     if (existingMine) {
@@ -214,7 +224,7 @@ export class CouncilStateMachine {
         kind: "spec",
         title: `Proposal draft (${round.id})`,
         content: params.contentMarkdown,
-        compactDigest: params.summary.slice(0, 580)
+        compactDigest: params.summary.slice(0, 580),
       });
       artifactRef = stored.pointer;
     }
@@ -235,7 +245,7 @@ export class CouncilStateMachine {
       prompt_tokens: promptTokens,
       completion_tokens: completionTokens,
       latency_ms: params.latencyMs ?? 0,
-      submitted_at: isoNow()
+      submitted_at: isoNow(),
     });
 
     this.db
@@ -243,7 +253,7 @@ export class CouncilStateMachine {
         `INSERT INTO turn_submissions
           (id, round_id, room_id, session_employee_id, anonymous_alias, summary, content_markdown,
            artifact_ref, citations_json, prompt_tokens, completion_tokens, latency_ms, submitted_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         submission.id,
@@ -258,7 +268,7 @@ export class CouncilStateMachine {
         submission.prompt_tokens,
         submission.completion_tokens,
         submission.latency_ms,
-        submission.submitted_at
+        submission.submitted_at,
       );
 
     this.ledger.append({
@@ -270,37 +280,44 @@ export class CouncilStateMachine {
         prompt_tokens: promptTokens,
         completion_tokens: completionTokens,
         saved_by_context_slicer_tokens: 0,
-        estimated_cost_usd: 0
+        estimated_cost_usd: 0,
       },
       payload: {
         submission_id: submission.id,
         summary: submission.summary,
-        content_markdown: submission.content_markdown
-      }
+        content_markdown: submission.content_markdown,
+      },
     });
 
     const countRow = this.db
-      .prepare(`SELECT COUNT(*) AS cnt FROM turn_submissions WHERE round_id = ?`)
+      .prepare("SELECT COUNT(*) AS cnt FROM turn_submissions WHERE round_id = ?")
       .get(round.id) as { cnt: number };
 
     let unsealedForCritique = false;
-    if (Number(countRow.cnt) >= room.participant_ids.length && round.visibility_state === "sealed") {
+    if (
+      Number(countRow.cnt) >= room.participant_ids.length &&
+      round.visibility_state === "sealed"
+    ) {
       this.unsealAndAnonymizeRound(room.id, round.id);
       unsealedForCritique = true;
     }
 
-    return { submission: this.getSubmissionById(submission.id)!, unsealedForCritique };
+    const storedSubmission = this.getSubmissionById(submission.id);
+    if (!storedSubmission) {
+      throw new Error(`Submission not found after insert: ${submission.id}`);
+    }
+    return { submission: storedSubmission, unsealedForCritique };
   }
 
   public unsealAndAnonymizeRound(roomId: string, roundId: string): AnonymizedProposalView[] {
     const rows = this.db
-      .prepare(`SELECT * FROM turn_submissions WHERE round_id = ?`)
+      .prepare("SELECT * FROM turn_submissions WHERE round_id = ?")
       .all(roundId) as Array<Record<string, unknown>>;
 
     const shuffled = fisherYatesShuffle(rows);
     const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     const updateStmt = this.db.prepare(
-      `UPDATE turn_submissions SET anonymous_alias = ? WHERE id = ?`
+      "UPDATE turn_submissions SET anonymous_alias = ? WHERE id = ?",
     );
 
     shuffled.forEach((row, index) => {
@@ -310,12 +327,10 @@ export class CouncilStateMachine {
 
     this.db
       .prepare(
-        `UPDATE deliberation_rounds SET visibility_state = 'anonymized', stage = 'critique' WHERE id = ?`
+        `UPDATE deliberation_rounds SET visibility_state = 'anonymized', stage = 'critique' WHERE id = ?`,
       )
       .run(roundId);
-    this.db
-      .prepare(`UPDATE war_room_meetings SET status = 'critiquing' WHERE id = ?`)
-      .run(roomId);
+    this.db.prepare(`UPDATE war_room_meetings SET status = 'critiquing' WHERE id = ?`).run(roomId);
 
     const anonymizedViews = this.getVisibleSubmissionsForViewer(roundId, "__peer__");
     this.ledger.append({
@@ -324,8 +339,8 @@ export class CouncilStateMachine {
       visibility: "anonymized_peers",
       payload: {
         round_id: roundId,
-        proposals: anonymizedViews
-      }
+        proposals: anonymizedViews,
+      },
     });
 
     return anonymizedViews;
@@ -336,28 +351,41 @@ export class CouncilStateMachine {
    * - While `sealed`, viewer X ONLY receives X's own submission; peers are strictly filtered in SQL.
    * - While `anonymized`, author/model identities are stripped and only `Proposal A..N` are returned.
    */
+  /**
+   * Alias of the submission a participant authored in a round (trusted, hub-side use only —
+   * never expose this mapping to participants, it would break anonymity).
+   */
+  public getAuthorAlias(roundId: string, sessionEmployeeId: string): string | null {
+    const row = this.db
+      .prepare(
+        "SELECT anonymous_alias FROM turn_submissions WHERE round_id = ? AND session_employee_id = ? LIMIT 1",
+      )
+      .get(roundId, sessionEmployeeId) as { anonymous_alias: string } | undefined;
+    return row ? String(row.anonymous_alias) : null;
+  }
+
   public getVisibleSubmissionsForViewer(
     roundId: string,
-    viewerSessionEmployeeId: string
+    viewerSessionEmployeeId: string,
   ): AnonymizedProposalView[] {
     const round = this.getRound(roundId);
     if (!round) return [];
 
     if (round.visibility_state === "sealed") {
       const ownRows = this.db
-        .prepare(`SELECT * FROM turn_submissions WHERE round_id = ? AND session_employee_id = ?`)
+        .prepare("SELECT * FROM turn_submissions WHERE round_id = ? AND session_employee_id = ?")
         .all(roundId, viewerSessionEmployeeId) as Array<Record<string, unknown>>;
       return ownRows.map((r) => ({
         anonymous_alias: String(r.anonymous_alias),
         summary: String(r.summary),
         content_markdown: String(r.content_markdown),
         artifact_ref: r.artifact_ref ? String(r.artifact_ref) : undefined,
-        citations: JSON.parse(String(r.citations_json))
+        citations: JSON.parse(String(r.citations_json)),
       }));
     }
 
     const rows = this.db
-      .prepare(`SELECT * FROM turn_submissions WHERE round_id = ? ORDER BY anonymous_alias ASC`)
+      .prepare("SELECT * FROM turn_submissions WHERE round_id = ? ORDER BY anonymous_alias ASC")
       .all(roundId) as Array<Record<string, unknown>>;
 
     return rows.map((r) => ({
@@ -365,13 +393,13 @@ export class CouncilStateMachine {
       summary: String(r.summary),
       content_markdown: String(r.content_markdown),
       artifact_ref: r.artifact_ref ? String(r.artifact_ref) : undefined,
-      citations: JSON.parse(String(r.citations_json))
+      citations: JSON.parse(String(r.citations_json)),
     }));
   }
 
   public pollAssignment(
     roomId: string,
-    participantId: string
+    participantId: string,
   ): {
     room_status: WarRoomMeeting["status"];
     round: DeliberationRound;
@@ -389,9 +417,7 @@ export class CouncilStateMachine {
         ? []
         : this.listRawSubmissionsForRound(activeRound.id);
 
-    const ticket = room.linked_ticket_id
-      ? this.kanban.getTicketById(room.linked_ticket_id)
-      : null;
+    const ticket = room.linked_ticket_id ? this.kanban.getTicketById(room.linked_ticket_id) : null;
     const artifacts = this.blackboard.listArtifacts({ roomId });
 
     const slice = this.slicer.buildRoundContext({
@@ -403,16 +429,16 @@ export class CouncilStateMachine {
       priorRoundDigests: visible.map((v) => ({
         alias: v.anonymous_alias,
         summary: v.summary,
-        artifactRef: v.artifact_ref
+        artifactRef: v.artifact_ref,
       })),
-      artifacts
+      artifacts,
     });
 
     return {
       room_status: room.status,
       round: activeRound,
       visible_proposals: visible,
-      context_slice: slice
+      context_slice: slice,
     };
   }
 
@@ -436,7 +462,7 @@ export class CouncilStateMachine {
     }
 
     const targetRow = this.db
-      .prepare(`SELECT * FROM turn_submissions WHERE round_id = ? AND anonymous_alias = ? LIMIT 1`)
+      .prepare("SELECT * FROM turn_submissions WHERE round_id = ? AND anonymous_alias = ? LIMIT 1")
       .get(round.id, params.targetAnonymousAlias) as Record<string, unknown> | undefined;
 
     if (!targetRow) {
@@ -461,7 +487,7 @@ export class CouncilStateMachine {
       findings: params.findings,
       strengths_summary: params.strengthsSummary ?? "",
       blind_spots_summary: params.blindSpotsSummary ?? "",
-      created_at: isoNow()
+      created_at: isoNow(),
     });
 
     this.db
@@ -469,7 +495,7 @@ export class CouncilStateMachine {
         `INSERT INTO critiques
           (id, round_id, room_id, reviewer_session_id, target_submission_id, target_anonymous_alias,
            rubric_scores_json, findings_json, strengths_summary, blind_spots_summary, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         critique.id,
@@ -482,13 +508,22 @@ export class CouncilStateMachine {
         JSON.stringify(critique.findings),
         critique.strengths_summary,
         critique.blind_spots_summary,
-        critique.created_at
+        critique.created_at,
       );
 
-    this.db
-      .prepare(`UPDATE deliberation_rounds SET stage = 'vote' WHERE id = ?`)
-      .run(round.id);
-    this.db.prepare(`UPDATE war_room_meetings SET status = 'voting' WHERE id = ?`).run(room.id);
+    const reviewerCountRow = this.db
+      .prepare(
+        "SELECT COUNT(DISTINCT reviewer_session_id) AS cnt FROM critiques WHERE round_id = ?",
+      )
+      .get(round.id) as { cnt: number };
+    const requiredReviewers = Math.max(
+      1,
+      Math.ceil(room.participant_ids.length * room.config.quorum_ratio - 0.02),
+    );
+    if (Number(reviewerCountRow.cnt) >= requiredReviewers) {
+      this.db.prepare("UPDATE deliberation_rounds SET stage = 'vote' WHERE id = ?").run(round.id);
+      this.db.prepare("UPDATE war_room_meetings SET status = 'voting' WHERE id = ?").run(room.id);
+    }
 
     this.ledger.append({
       roomId: room.id,
@@ -499,8 +534,8 @@ export class CouncilStateMachine {
         critique_id: critique.id,
         target_anonymous_alias: critique.target_anonymous_alias,
         rubric_scores: critique.rubric_scores,
-        findings: critique.findings
-      }
+        findings: critique.findings,
+      },
     });
 
     return critique;
@@ -517,6 +552,15 @@ export class CouncilStateMachine {
     const room = this.getRoom(params.roomId);
     const round = this.getRound(params.roundId);
     if (!room || !round) throw new Error(`Room/round not found: ${params.roomId}`);
+    if (round.visibility_state === "sealed") {
+      throw new Error("Cannot cast votes while round is still sealed");
+    }
+    if (round.stage === "critique") {
+      this.db.prepare("UPDATE deliberation_rounds SET stage = 'vote' WHERE id = ?").run(round.id);
+    }
+    if (room.status === "critiquing") {
+      this.db.prepare("UPDATE war_room_meetings SET status = 'voting' WHERE id = ?").run(room.id);
+    }
 
     const vote = VoteSchema.parse({
       id: prefixedUlid("vot"),
@@ -526,13 +570,13 @@ export class CouncilStateMachine {
       ranked_aliases: params.rankedAliases,
       confidence: params.confidence,
       rationale: params.rationale ?? "",
-      created_at: isoNow()
+      created_at: isoNow(),
     });
 
     this.db
       .prepare(
         `INSERT INTO votes (id, round_id, room_id, voter_session_id, ranked_aliases_json, confidence, rationale, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         vote.id,
@@ -542,12 +586,12 @@ export class CouncilStateMachine {
         JSON.stringify(vote.ranked_aliases),
         vote.confidence,
         vote.rationale,
-        vote.created_at
+        vote.created_at,
       );
 
     const allVotes = this.listVotes(round.id);
     const aliases = this.getVisibleSubmissionsForViewer(round.id, "__peer__").map(
-      (p) => p.anonymous_alias
+      (p) => p.anonymous_alias,
     );
     const tally = this.voting.tally(allVotes, aliases);
 
@@ -567,21 +611,24 @@ export class CouncilStateMachine {
         prompt_tokens: sliceCheck.slicedTokens,
         completion_tokens: estimateTokens(vote.rationale || "vote"),
         saved_by_context_slicer_tokens: sliceCheck.savedTokens,
-        estimated_cost_usd: 0
+        estimated_cost_usd: 0,
       },
       payload: {
         vote_id: vote.id,
         ranked_aliases: vote.ranked_aliases,
         confidence: vote.confidence,
-        tally
-      }
+        tally,
+      },
     });
 
     return { vote, tally };
   }
 
   public buildContextForNextRound(roomId: string, roundNumber: number): ContextSliceResult {
-    const room = this.getRoom(roomId)!;
+    const room = this.getRoom(roomId);
+    if (!room) {
+      throw new Error(`Room not found: ${roomId}`);
+    }
     const rounds = this.listRounds(roomId);
     const allSubs = rounds.flatMap((r) => this.listRawSubmissionsForRound(r.id));
     const latestRound = rounds[rounds.length - 1];
@@ -589,9 +636,7 @@ export class CouncilStateMachine {
       ? this.getVisibleSubmissionsForViewer(latestRound.id, "__peer__")
       : [];
     const artifacts = this.blackboard.listArtifacts({ roomId });
-    const ticket = room.linked_ticket_id
-      ? this.kanban.getTicketById(room.linked_ticket_id)
-      : null;
+    const ticket = room.linked_ticket_id ? this.kanban.getTicketById(room.linked_ticket_id) : null;
 
     return this.slicer.buildRoundContext({
       room,
@@ -602,9 +647,9 @@ export class CouncilStateMachine {
       priorRoundDigests: visible.map((v) => ({
         alias: v.anonymous_alias,
         summary: v.summary,
-        artifactRef: v.artifact_ref
+        artifactRef: v.artifact_ref,
       })),
-      artifacts
+      artifacts,
     });
   }
 
@@ -624,7 +669,7 @@ export class CouncilStateMachine {
     const latestRound = rounds[rounds.length - 1];
     const winningRow = this.db
       .prepare(
-        `SELECT * FROM turn_submissions WHERE room_id = ? AND anonymous_alias = ? ORDER BY submitted_at DESC LIMIT 1`
+        "SELECT * FROM turn_submissions WHERE room_id = ? AND anonymous_alias = ? ORDER BY submitted_at DESC LIMIT 1",
       )
       .get(room.id, params.winningAlias) as Record<string, unknown> | undefined;
 
@@ -635,7 +680,7 @@ export class CouncilStateMachine {
     const votes = latestRound ? this.listVotes(latestRound.id) : [];
     const aliases = latestRound
       ? this.getVisibleSubmissionsForViewer(latestRound.id, "__peer__").map(
-          (p) => p.anonymous_alias
+          (p) => p.anonymous_alias,
         )
       : [params.winningAlias];
     const tally = this.voting.tally(votes, aliases);
@@ -658,7 +703,7 @@ export class CouncilStateMachine {
       dissent_log: params.dissentLog,
       human_approved_by: null,
       approved_at: null,
-      created_at: isoNow()
+      created_at: isoNow(),
     });
 
     this.db
@@ -666,7 +711,7 @@ export class CouncilStateMachine {
         `INSERT INTO decision_records
           (id, room_id, winning_submission_id, winning_alias, resolution_method,
            final_plan_markdown, adopted_amendments_json, dissent_log_json, human_approved_by, approved_at, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)`,
       )
       .run(
         decision.id,
@@ -677,13 +722,13 @@ export class CouncilStateMachine {
         decision.final_plan_markdown,
         JSON.stringify(decision.adopted_amendments),
         JSON.stringify(decision.dissent_log),
-        decision.created_at
+        decision.created_at,
       );
 
     if (latestRound) {
       this.db
         .prepare(
-          `UPDATE deliberation_rounds SET visibility_state = 'revealed', stage = 'synthesis', closed_at = ? WHERE id = ?`
+          `UPDATE deliberation_rounds SET visibility_state = 'revealed', stage = 'synthesis', closed_at = ? WHERE id = ?`,
         )
         .run(isoNow(), latestRound.id);
     }
@@ -699,19 +744,19 @@ export class CouncilStateMachine {
       kind: "decision_record",
       title: `DecisionRecord: ${room.title}`,
       content: params.finalPlanMarkdown,
-      compactDigest: `Winner: ${params.winningAlias} (${method}). Dissents: ${params.dissentLog.length}`
+      compactDigest: `Winner: ${params.winningAlias} (${method}). Dissents: ${params.dissentLog.length}`,
     });
 
     this.ledger.append({
       roomId: room.id,
       eventType: "decision.synthesized",
       actorSessionEmployeeId: params.moderatorId,
-      payload: { decision }
+      payload: { decision },
     });
     this.ledger.append({
       roomId: room.id,
       eventType: "human_gate.requested",
-      payload: { room_id: room.id, decision_id: decision.id }
+      payload: { room_id: room.id, decision_id: decision.id },
     });
 
     return decision;
@@ -721,6 +766,8 @@ export class CouncilStateMachine {
     roomId: string;
     action: "inject_guidance" | "approve_decision" | "reject_and_reopen" | "abort_room";
     guidanceMarkdown?: string;
+    selectedSubmissionId?: string;
+    extendMaxRounds?: boolean;
     approvedBy?: string;
   }): WarRoomMeeting {
     const room = this.getRoom(params.roomId);
@@ -729,42 +776,41 @@ export class CouncilStateMachine {
     if (params.action === "inject_guidance" && params.guidanceMarkdown) {
       const updatedGuidance = [...room.active_guidance, params.guidanceMarkdown];
       this.db
-        .prepare(`UPDATE war_room_meetings SET active_guidance_json = ? WHERE id = ?`)
+        .prepare("UPDATE war_room_meetings SET active_guidance_json = ? WHERE id = ?")
         .run(JSON.stringify(updatedGuidance), room.id);
     } else if (params.action === "approve_decision") {
-      const now = isoNow();
-      this.db
-        .prepare(
-          `UPDATE decision_records SET human_approved_by = ?, approved_at = ? WHERE room_id = ?`
-        )
-        .run(params.approvedBy ?? "director", now, room.id);
-      this.db
-        .prepare(`UPDATE war_room_meetings SET status = 'executing' WHERE id = ?`)
-        .run(room.id);
-      this.roster.moveEmployeesToZone(room.participant_ids, "at_desk", "typing_code");
-      if (room.linked_ticket_id) {
-        this.kanban.updateTicket(room.linked_ticket_id, { kanban_column: "in_progress" });
-      }
+      this.approveDecision(room, params.approvedBy ?? "director", params.selectedSubmissionId);
     } else if (params.action === "reject_and_reopen") {
+      this.budget?.assertWithinBudget({ roomId: room.id });
       const rounds = this.listRounds(room.id);
       const nextNum = rounds.length + 1;
-      if (params.guidanceMarkdown) {
-        const updatedGuidance = [...room.active_guidance, params.guidanceMarkdown];
-        this.db
-          .prepare(`UPDATE war_room_meetings SET active_guidance_json = ?, status = 'diverging' WHERE id = ?`)
-          .run(JSON.stringify(updatedGuidance), room.id);
-      } else {
-        this.db
-          .prepare(`UPDATE war_room_meetings SET status = 'diverging' WHERE id = ?`)
-          .run(room.id);
+      if (nextNum > room.config.max_rounds && !params.extendMaxRounds) {
+        throw new ArenaClientError(
+          `Cannot reopen room ${room.id}: max_rounds (${room.config.max_rounds}) reached`,
+          409,
+        );
       }
-      if (nextNum <= room.config.max_rounds) {
-        this.startRound(room.id, nextNum, "proposal", "sealed");
+      if (nextNum > MAX_DELIBERATION_ROUNDS) {
+        throw new ArenaClientError(
+          `Cannot reopen room ${room.id}: hard limit of ${MAX_DELIBERATION_ROUNDS} rounds reached; abort the room or approve a submission instead`,
+          409,
+        );
       }
-    } else if (params.action === "abort_room") {
+      const nextConfig =
+        nextNum > room.config.max_rounds ? { ...room.config, max_rounds: nextNum } : room.config;
+      const updatedGuidance = params.guidanceMarkdown
+        ? [...room.active_guidance, params.guidanceMarkdown]
+        : room.active_guidance;
       this.db
-        .prepare(`UPDATE war_room_meetings SET status = 'aborted' WHERE id = ?`)
-        .run(room.id);
+        .prepare(
+          `UPDATE war_room_meetings
+           SET active_guidance_json = ?, config_json = ?, status = 'diverging'
+           WHERE id = ?`,
+        )
+        .run(JSON.stringify(updatedGuidance), JSON.stringify(nextConfig), room.id);
+      this.startRound(room.id, nextNum, "proposal", "sealed");
+    } else if (params.action === "abort_room") {
+      this.db.prepare(`UPDATE war_room_meetings SET status = 'aborted' WHERE id = ?`).run(room.id);
       this.roster.moveEmployeesToZone(room.participant_ids, "at_desk", "idle");
     }
 
@@ -774,44 +820,293 @@ export class CouncilStateMachine {
       actorSessionEmployeeId: "director",
       payload: {
         action: params.action,
-        guidance_markdown: params.guidanceMarkdown
-      }
+        guidance_markdown: params.guidanceMarkdown,
+      },
     });
 
-    return this.getRoom(room.id)!;
+    const updatedRoom = this.getRoom(room.id);
+    if (!updatedRoom) {
+      throw new Error(`Room disappeared after gate resolution: ${room.id}`);
+    }
+    return updatedRoom;
+  }
+
+  /**
+   * Director sign-off. Without a selection it approves the decision currently awaiting the gate
+   * (never a stale one from a round that was rejected and reopened). With a selection it can
+   * override the winner; if the previous decision was already decomposed into beads, the override
+   * becomes a new DecisionRecord and the superseded beads are retired so the board matches the plan.
+   */
+  private approveDecision(
+    room: WarRoomMeeting,
+    approver: string,
+    selectedSubmissionId: string | undefined,
+  ): void {
+    const now = isoNow();
+    let decision = this.getLatestDecision(room.id);
+
+    if (selectedSubmissionId) {
+      decision = this.applyWinnerSelection(room, decision, selectedSubmissionId, approver, now);
+    } else {
+      if (room.status !== "awaiting_human_gate" || !decision) {
+        throw new ArenaClientError(
+          `Room ${room.id} has no decision awaiting approval (status: ${room.status}); publish a decision or select a submission first`,
+          409,
+        );
+      }
+      this.db
+        .prepare("UPDATE decision_records SET human_approved_by = ?, approved_at = ? WHERE id = ?")
+        .run(approver, now, decision.id);
+      decision = this.getLatestDecision(room.id);
+    }
+
+    this.db.prepare("UPDATE war_room_meetings SET status = 'executing' WHERE id = ?").run(room.id);
+    this.roster.moveEmployeesToZone(room.participant_ids, "at_desk", "typing_code");
+    if (room.linked_ticket_id) {
+      this.kanban.updateTicket(room.linked_ticket_id, { kanban_column: "in_progress" });
+    }
+    if (decision) this.decomposeDecisionIntoBeads(room, decision);
+  }
+
+  private applyWinnerSelection(
+    room: WarRoomMeeting,
+    current: DecisionRecord | null,
+    selectedSubmissionId: string,
+    approver: string,
+    now: string,
+  ): DecisionRecord | null {
+    const chosenRow = this.db
+      .prepare(
+        `SELECT * FROM turn_submissions
+         WHERE room_id = ? AND (id = ? OR anonymous_alias = ?)
+         ORDER BY submitted_at DESC LIMIT 1`,
+      )
+      .get(room.id, selectedSubmissionId, selectedSubmissionId) as
+      | Record<string, unknown>
+      | undefined;
+    if (!chosenRow) {
+      throw new ArenaClientError(
+        `Selected submission not found in room ${room.id}: ${selectedSubmissionId}`,
+        404,
+      );
+    }
+    const chosenId = String(chosenRow.id);
+    const chosenAlias = String(chosenRow.anonymous_alias);
+    const sameWinner = current?.winning_submission_id === chosenId;
+
+    if (current && (sameWinner || !this.hasBeads(current.id))) {
+      // Nothing was built from this decision yet (or the winner is unchanged): amend in place.
+      const nextPlan = sameWinner
+        ? current.final_plan_markdown
+        : String(chosenRow.content_markdown);
+      this.db
+        .prepare(
+          `UPDATE decision_records
+           SET winning_submission_id = ?, winning_alias = ?, resolution_method = 'human_override',
+               final_plan_markdown = ?, human_approved_by = ?, approved_at = ?
+           WHERE id = ?`,
+        )
+        .run(chosenId, chosenAlias, nextPlan, approver, now, current.id);
+      return this.getLatestDecision(room.id);
+    }
+
+    if (current) this.retireBeads(current.id, `Superseded by director override (${chosenAlias})`);
+    const override = DecisionRecordSchema.parse({
+      id: prefixedUlid("dec"),
+      room_id: room.id,
+      winning_submission_id: chosenId,
+      winning_alias: chosenAlias,
+      resolution_method: "human_override",
+      final_plan_markdown: String(chosenRow.content_markdown),
+      adopted_amendments: [],
+      dissent_log: [],
+      human_approved_by: approver,
+      approved_at: now,
+      created_at: now,
+    });
+    this.db
+      .prepare(
+        `INSERT INTO decision_records
+          (id, room_id, winning_submission_id, winning_alias, resolution_method,
+           final_plan_markdown, adopted_amendments_json, dissent_log_json, human_approved_by, approved_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        override.id,
+        override.room_id,
+        override.winning_submission_id,
+        override.winning_alias,
+        override.resolution_method,
+        override.final_plan_markdown,
+        JSON.stringify(override.adopted_amendments),
+        JSON.stringify(override.dissent_log),
+        override.human_approved_by ?? null,
+        override.approved_at ?? null,
+        override.created_at,
+      );
+    return this.getLatestDecision(room.id);
+  }
+
+  private hasBeads(decisionId: string): boolean {
+    return Boolean(
+      this.db.prepare("SELECT 1 FROM task_tickets WHERE decision_id = ? LIMIT 1").get(decisionId),
+    );
+  }
+
+  /** Park unfinished beads of an overridden plan: unassign, block, and record why. */
+  private retireBeads(decisionId: string, reason: string): void {
+    const rows = this.db
+      .prepare(
+        "SELECT id, assignee_session_id, failure_notes_json FROM task_tickets WHERE decision_id = ? AND kanban_column != 'done'",
+      )
+      .all(decisionId) as Array<{
+      id: string;
+      assignee_session_id: string | null;
+      failure_notes_json: string;
+    }>;
+    for (const row of rows) {
+      const assignee = row.assignee_session_id ? String(row.assignee_session_id) : null;
+      if (assignee && this.roster.getEmployeeById(assignee)?.active_ticket_id === row.id) {
+        this.roster.setActiveTicket(assignee, null);
+      }
+      const notes = [...(JSON.parse(String(row.failure_notes_json)) as string[]), reason];
+      this.db
+        .prepare("UPDATE task_tickets SET failure_notes_json = ? WHERE id = ?")
+        .run(JSON.stringify(notes), row.id);
+      this.kanban.updateTicket(String(row.id), {
+        kanban_column: "blocked",
+        assignee_session_id: null,
+      });
+    }
+  }
+
+  public decomposeDecisionIntoBeads(room: WarRoomMeeting, decision: DecisionRecord): TaskTicket[] {
+    const existingRows = this.db
+      .prepare("SELECT id FROM task_tickets WHERE decision_id = ?")
+      .all(decision.id) as Array<{ id: string }>;
+    if (existingRows.length > 0) {
+      return existingRows
+        .map((r) => this.kanban.getTicketById(String(r.id)))
+        .filter((t): t is TaskTicket => t !== null);
+    }
+
+    const bulletLines = decision.final_plan_markdown
+      .split(/\r?\n/)
+      .map((line) => line.replace(/^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s*)?/, "").trim())
+      .filter((line, idx, arr) => {
+        const rawLine = decision.final_plan_markdown.split(/\r?\n/)[idx] ?? "";
+        return (
+          /^\s*(?:[-*+]|\d+[.)])\s+/.test(rawLine) && line.length > 0 && arr.indexOf(line) === idx
+        );
+      });
+
+    const planHeadline = decision.final_plan_markdown
+      .split(/\r?\n/)
+      .map((line) => line.replace(/^#+\s*/, "").trim())
+      .find((line) => line.length > 0);
+
+    const rawItems =
+      bulletLines.length > 0
+        ? [...bulletLines, ...decision.adopted_amendments]
+        : [
+            planHeadline ? `Implement: ${planHeadline.slice(0, 140)}` : `Implement: ${room.title}`,
+            ...decision.adopted_amendments,
+          ];
+
+    const uniqueItems = Array.from(
+      new Set(rawItems.map((item) => item.trim()).filter((item) => item.length > 0)),
+    );
+
+    const parentTicket = room.linked_ticket_id
+      ? this.kanban.getTicketById(room.linked_ticket_id)
+      : null;
+
+    let createdBeads: TaskTicket[];
+    if (parentTicket) {
+      createdBeads = this.kanban.decomposeEpic({
+        parentTicketId: parentTicket.id,
+        decisionId: decision.id,
+        subtasks: uniqueItems.map((title, idx) => ({
+          title,
+          assigneeSessionId:
+            room.participant_ids.length > 0
+              ? room.participant_ids[idx % room.participant_ids.length]
+              : undefined,
+          acceptanceCriteria: [
+            `Verified against DecisionRecord ${decision.id} (${decision.winning_alias})`,
+          ],
+          dependsOnIndex: idx > 0 && bulletLines.length > 1 ? [0] : [],
+        })),
+      });
+    } else {
+      createdBeads = uniqueItems.map((title, idx) => {
+        const assigneeId =
+          room.participant_ids.length > 0
+            ? room.participant_ids[idx % room.participant_ids.length]
+            : null;
+        return this.kanban.createTicket({
+          parent_ticket_id: null,
+          decision_id: decision.id,
+          title,
+          description_markdown: `Auto-decomposed from War Room **${room.title}** (${decision.winning_alias}).`,
+          acceptance_criteria: [
+            `Verified against DecisionRecord ${decision.id} (${decision.winning_alias})`,
+          ],
+          assignee_session_id: assigneeId,
+          kanban_column: assigneeId ? "assigned" : "backlog",
+          priority: "p1_high",
+          repo_root_path: room.repo_root_path,
+          base_branch: room.base_branch ?? "main",
+        });
+      });
+    }
+
+    for (const bead of createdBeads) {
+      this.ledger.append({
+        roomId: room.id,
+        eventType: "bead.created",
+        actorSessionEmployeeId: bead.assignee_session_id ?? undefined,
+        payload: {
+          decision_id: decision.id,
+          ticket: bead,
+        },
+      });
+    }
+
+    return createdBeads;
   }
 
   public getRoom(roomId: string): WarRoomMeeting | null {
-    const row = this.db
-      .prepare(`SELECT * FROM war_room_meetings WHERE id = ?`)
-      .get(roomId) as Record<string, unknown> | undefined;
+    const row = this.db.prepare("SELECT * FROM war_room_meetings WHERE id = ?").get(roomId) as
+      | Record<string, unknown>
+      | undefined;
     return row ? this.mapRoom(row) : null;
   }
 
   public listRooms(): WarRoomMeeting[] {
     const rows = this.db
-      .prepare(`SELECT * FROM war_room_meetings ORDER BY created_at DESC`)
+      .prepare("SELECT * FROM war_room_meetings ORDER BY created_at DESC")
       .all() as Array<Record<string, unknown>>;
     return rows.map((r) => this.mapRoom(r));
   }
 
   public getRound(roundId: string): DeliberationRound | null {
-    const row = this.db
-      .prepare(`SELECT * FROM deliberation_rounds WHERE id = ?`)
-      .get(roundId) as Record<string, unknown> | undefined;
+    const row = this.db.prepare("SELECT * FROM deliberation_rounds WHERE id = ?").get(roundId) as
+      | Record<string, unknown>
+      | undefined;
     return row ? this.mapRound(row) : null;
   }
 
   public listRounds(roomId: string): DeliberationRound[] {
     const rows = this.db
-      .prepare(`SELECT * FROM deliberation_rounds WHERE room_id = ? ORDER BY round_number ASC`)
+      .prepare("SELECT * FROM deliberation_rounds WHERE room_id = ? ORDER BY round_number ASC")
       .all(roomId) as Array<Record<string, unknown>>;
     return rows.map((r) => this.mapRound(r));
   }
 
   public listCritiques(roomId: string): Critique[] {
     const rows = this.db
-      .prepare(`SELECT * FROM critiques WHERE room_id = ? ORDER BY created_at ASC`)
+      .prepare("SELECT * FROM critiques WHERE room_id = ? ORDER BY created_at ASC")
       .all(roomId) as Array<Record<string, unknown>>;
     return rows.map((r) =>
       CritiqueSchema.parse({
@@ -825,14 +1120,14 @@ export class CouncilStateMachine {
         findings: JSON.parse(String(r.findings_json)),
         strengths_summary: String(r.strengths_summary),
         blind_spots_summary: String(r.blind_spots_summary),
-        created_at: String(r.created_at)
-      })
+        created_at: String(r.created_at),
+      }),
     );
   }
 
   public listVotes(roundId: string): Vote[] {
     const rows = this.db
-      .prepare(`SELECT * FROM votes WHERE round_id = ? ORDER BY created_at ASC`)
+      .prepare("SELECT * FROM votes WHERE round_id = ? ORDER BY created_at ASC")
       .all(roundId) as Array<Record<string, unknown>>;
     return rows.map((r) =>
       VoteSchema.parse({
@@ -843,14 +1138,16 @@ export class CouncilStateMachine {
         ranked_aliases: JSON.parse(String(r.ranked_aliases_json)),
         confidence: Number(r.confidence),
         rationale: String(r.rationale),
-        created_at: String(r.created_at)
-      })
+        created_at: String(r.created_at),
+      }),
     );
   }
 
   public getLatestDecision(roomId: string): DecisionRecord | null {
     const row = this.db
-      .prepare(`SELECT * FROM decision_records WHERE room_id = ? ORDER BY created_at DESC LIMIT 1`)
+      .prepare(
+        "SELECT * FROM decision_records WHERE room_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1",
+      )
       .get(roomId) as Record<string, unknown> | undefined;
     if (!row) return null;
     return DecisionRecordSchema.parse({
@@ -864,20 +1161,20 @@ export class CouncilStateMachine {
       dissent_log: JSON.parse(String(row.dissent_log_json)),
       human_approved_by: row.human_approved_by ? String(row.human_approved_by) : null,
       approved_at: row.approved_at ? String(row.approved_at) : null,
-      created_at: String(row.created_at)
+      created_at: String(row.created_at),
     });
   }
 
   private getSubmissionById(id: string): TurnSubmission | null {
-    const row = this.db
-      .prepare(`SELECT * FROM turn_submissions WHERE id = ?`)
-      .get(id) as Record<string, unknown> | undefined;
+    const row = this.db.prepare("SELECT * FROM turn_submissions WHERE id = ?").get(id) as
+      | Record<string, unknown>
+      | undefined;
     return row ? this.mapSubmission(row) : null;
   }
 
   private listRawSubmissionsForRound(roundId: string): TurnSubmission[] {
     const rows = this.db
-      .prepare(`SELECT * FROM turn_submissions WHERE round_id = ? ORDER BY submitted_at ASC`)
+      .prepare("SELECT * FROM turn_submissions WHERE round_id = ? ORDER BY submitted_at ASC")
       .all(roundId) as Array<Record<string, unknown>>;
     return rows.map((r) => this.mapSubmission(r));
   }
@@ -895,10 +1192,10 @@ export class CouncilStateMachine {
       participant_ids: JSON.parse(String(row.participant_ids_json)),
       moderator_id: String(row.moderator_id),
       active_guidance: JSON.parse(String(row.active_guidance_json)),
-      config: JSON.parse(String(row.config_json)),
+      config: parseStoredRoomConfig(String(row.config_json)),
       consumed_tokens: Number(row.consumed_tokens),
       consumed_cost_usd: Number(row.consumed_cost_usd),
-      created_at: String(row.created_at)
+      created_at: String(row.created_at),
     });
   }
 
@@ -910,7 +1207,7 @@ export class CouncilStateMachine {
       stage: row.stage,
       visibility_state: row.visibility_state,
       started_at: String(row.started_at),
-      closed_at: row.closed_at ? String(row.closed_at) : null
+      closed_at: row.closed_at ? String(row.closed_at) : null,
     });
   }
 
@@ -928,7 +1225,7 @@ export class CouncilStateMachine {
       prompt_tokens: Number(row.prompt_tokens),
       completion_tokens: Number(row.completion_tokens),
       latency_ms: Number(row.latency_ms),
-      submitted_at: String(row.submitted_at)
+      submitted_at: String(row.submitted_at),
     });
   }
 }
