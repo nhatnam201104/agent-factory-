@@ -13,6 +13,7 @@ import type {
 } from "@factory-arena/protocol";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { CritiqueMatrix } from "./council/CritiqueMatrix.js";
+import { filterOpenRooms } from "./council/roomStatus.js";
 import { ConnectAiModal } from "./inspector/ConnectAiModal.js";
 import { DirectorDeskHUD } from "./inspector/DirectorDeskHUD.js";
 import {
@@ -163,7 +164,20 @@ export function App() {
     await refreshAll();
   };
 
+  const isSummoningRef = useRef(false);
+
+  /** One glass war room: refuse while a meeting is open or a summon is still in flight. */
   const handleSummonCouncil = async () => {
+    if (isSummoningRef.current || filterOpenRooms(rooms).length > 0) return;
+    isSummoningRef.current = true;
+    try {
+      await summonCouncil();
+    } finally {
+      isSummoningRef.current = false;
+    }
+  };
+
+  const summonCouncil = async () => {
     if (employees.length < 2) return;
     const ids = employees.slice(0, 3).map((e) => e.id);
     const createRes = await apiFetch("/api/v1/rooms", {
@@ -394,8 +408,21 @@ export function App() {
     await refreshAll();
   };
 
+  /** There is one glass war room, so disbanding ends every open meeting (incl. stale ones). */
+  const handleDisbandAllRooms = async () => {
+    const steer = (roomId: string) =>
+      apiFetch(`/api/v1/rooms/${roomId}/steer`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "abort_room" }),
+      });
+    await Promise.allSettled(filterOpenRooms(rooms).map((room) => steer(room.id)));
+    await refreshAll();
+  };
+
   const selectedEmployee = employees.find((e) => e.id === selectedEmpId) ?? employees[0] ?? null;
   const activeRoom = rooms[0];
+  const openRoomCount = filterOpenRooms(rooms).length;
   const openTickets = tickets.filter((t) => t.kanban_column !== "done").length;
   const roomsAwaitingGate = rooms.filter((r) => r.status === "awaiting_human_gate").length;
   const tabs: AppTabDef[] = [
@@ -446,11 +473,27 @@ export function App() {
             type="button"
             className="btn"
             data-testid="btn-summon-council"
-            title="Triệu tập họp phản biện tại phòng họp kính 3D"
+            title={
+              openRoomCount > 0
+                ? "Đang có phòng họp mở — hãy giải tán trước khi triệu tập lại"
+                : "Triệu tập họp phản biện tại phòng họp kính 3D"
+            }
+            disabled={openRoomCount > 0}
             onClick={handleSummonCouncil}
           >
             ⚖️ Triệu tập họp
           </button>
+          {openRoomCount > 0 ? (
+            <button
+              type="button"
+              className="btn"
+              data-testid="btn-disband-council"
+              title="Kết thúc mọi cuộc họp đang mở và cho mọi người về lại bàn làm việc"
+              onClick={() => void handleDisbandAllRooms()}
+            >
+              🛑 Giải tán họp{openRoomCount > 1 ? ` (${openRoomCount})` : ""}
+            </button>
+          ) : null}
           <button
             type="button"
             className="btn"
@@ -516,6 +559,7 @@ export function App() {
             rooms={rooms}
             onDispatchCommand={handleDispatchDirectorCommand}
             onSteerRoom={handleSteerRoom}
+            onDisbandAll={handleDisbandAllRooms}
           />
           <EmployeeInspectorDrawer
             employee={selectedEmployee}
