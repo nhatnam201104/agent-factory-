@@ -1,171 +1,335 @@
 import * as THREE from "three";
-import { FLOOR, KANBAN_BOARD_CENTER, LOUNGE_CENTER } from "./layout.js";
+import type { OfficeLayout, Rect, ZoneKind } from "./layout.js";
 import { type MeshKit, createPlant, freezeStatic } from "./meshKit.js";
+import { zoneExtent } from "./zoneSeating.js";
 
-const WALL_HEIGHT = 3.2;
-const WALL_THICKNESS = 0.25;
+/** Warm haze colour shared by the scene background, fog and the CSS viewport. */
+export const HAZE = 0xf1d9cf;
+const GROUND_COLOR = 0xdcc8a4;
+const CURB_COLOR = 0xcfc4b0;
+
 const COLORS = {
   plankBase: "#d9b48f",
   plankSeam: "rgba(120, 82, 52, 0.28)",
-  diorama: 0x8c6a52,
-  wall: 0xf3e9dc,
-  baseboard: 0xd6c3a8,
-  frame: 0xfffaf2,
   oak: 0xe6cfa9,
   walnut: 0x8b5e3c,
   cork: 0xc9a27a,
   sofa: 0x8fa9cf,
   cushion: 0xa9bfdf,
   rugLounge: 0xeccfae,
+  rugKanban: 0xbcd8c2,
+  rugCoffee: 0xe8d3a4,
+  rugDirector: 0xd9cdea,
   lampGlow: 0xffd9a0,
   counter: 0xf6f1ea,
   machine: 0x3d4252,
 } as const;
 const STICKY_COLORS = [0xffe08a, 0xffb4a8, 0xb5e3c4, 0xb8d4ff, 0xe3c6ff];
+/** floorRects order from computeOfficeLayout: [north, west, deskBlock]. */
+const DESK_FLOOR_INDEX = 2;
+const DECOR_POOL = 16;
 
-/** Builds the static cozy-office shell: floor, cut-away walls, windows and furniture. */
-export function buildOfficeEnvironment(scene: THREE.Scene, kit: MeshKit): void {
+export interface OfficeEnvironmentHandle {
+  /** Resize the desk-block floor for a new layout (scale/repeat only, no new geometry). */
+  applyLayout: (layout: OfficeLayout) => void;
+  /** Grow/trim the lounge or kanban floor patch for `occupants` people. */
+  setOccupants: (kind: "lounge" | "kanban", occupants: number) => void;
+  /** Keep the outdoor ground plane centred under the camera focus. */
+  followGround: (x: number, z: number, extent: number) => void;
+}
+
+/** Builds the open-world environment: outdoor ground, wooden floor patches and zones. */
+export function buildOfficeEnvironment(
+  scene: THREE.Scene,
+  kit: MeshKit,
+  layout: OfficeLayout,
+): OfficeEnvironmentHandle {
   const root = new THREE.Group();
   root.name = "office-environment";
 
-  root.add(buildFloor(kit));
-  root.add(buildWalls(kit));
-  root.add(buildKanbanBoard(kit));
-  root.add(buildDirectorCorner(kit));
-  root.add(buildLounge(kit));
-  root.add(buildCoffeeCorner(kit));
+  const ground = buildGround();
+  scene.add(ground);
 
-  const plantSpots: Array<[number, number, number]> = [
-    [-9.35, -6.45, 1.3],
-    [-0.4, -6.45, 1.1],
-    [9.3, -6.45, 1.35],
-    [9.3, 2.6, 1.0],
-    [0.4, 6.3, 0.9],
-    [-9.4, 2.6, 1.0],
-  ];
-  for (const [x, z, s] of plantSpots) {
-    const plant = createPlant(kit, s);
-    plant.position.set(x, 0, z);
-    root.add(plant);
+  const floor = buildWoodFloor(layout);
+  root.add(floor.group);
+
+  root.add(buildCurbs(kit, layout.floorRects, [0, 1]));
+  root.add(buildZoneFurniture(kit, layout));
+  root.add(buildZoneRugs(kit, layout));
+  root.add(buildPlanterRing(kit, layout));
+
+  const decor = new THREE.Group();
+  const plants: THREE.Group[] = [];
+  for (let i = 0; i < DECOR_POOL; i++) {
+    const plant = createPlant(kit, 1.0 + (i % 3) * 0.15);
+    plants.push(plant);
+    decor.add(plant);
   }
+  root.add(decor);
 
   freezeStatic(root);
   scene.add(root);
+
+  const applyDecor = (spots: readonly { x: number; z: number }[]) => {
+    plants.forEach((plant, i) => {
+      const spot = spots[i];
+      plant.visible = Boolean(spot);
+      if (spot) plant.position.set(spot.x, 0, spot.z);
+      plant.updateMatrix();
+    });
+  };
+  applyDecor(layout.decorSpots);
+
+  const applyDeskFloor = (layoutToApply: OfficeLayout) => {
+    const rect = layoutToApply.floorRects[DESK_FLOOR_INDEX];
+    if (!rect) return;
+    const mesh = floor.deskMesh;
+    const width = rect.maxX - rect.minX;
+    const depth = rect.maxZ - rect.minZ;
+    mesh.scale.set(width, 1, depth);
+    mesh.position.set((rect.minX + rect.maxX) / 2, -0.06, (rect.minZ + rect.maxZ) / 2);
+    floor.deskTexture.repeat.set(width / 4, depth / 4);
+    mesh.updateMatrix();
+    applyDecor(layoutToApply.decorSpots);
+  };
+
+  const extFloors: Record<"lounge" | "kanban", { mesh: THREE.Mesh; anchorIndex: 1 | 0 }> = {
+    lounge: { mesh: buildExtensionFloor(), anchorIndex: 1 },
+    kanban: { mesh: buildExtensionFloor(), anchorIndex: 0 },
+  };
+  root.add(extFloors.lounge.mesh, extFloors.kanban.mesh);
+
+  const setOccupants = (kind: "lounge" | "kanban", occupants: number) => {
+    const anchor = layout.zones[kind];
+    const extent = zoneExtent(anchor, occupants);
+    const ext = extFloors[kind];
+    if (!ext) return;
+    const widthAlongGrowth =
+      kind === "lounge"
+        ? anchor.baseBounds.minX - extent.minX
+        : anchor.baseBounds.minZ - extent.minZ;
+    ext.mesh.visible = widthAlongGrowth > 0.01;
+    if (!ext.mesh.visible) return;
+    if (kind === "lounge") {
+      ext.mesh.scale.set(widthAlongGrowth, 1, anchor.baseBounds.maxZ - anchor.baseBounds.minZ);
+      ext.mesh.position.set(
+        extent.minX + widthAlongGrowth / 2,
+        -0.055,
+        (anchor.baseBounds.minZ + anchor.baseBounds.maxZ) / 2,
+      );
+    } else {
+      ext.mesh.scale.set(anchor.baseBounds.maxX - anchor.baseBounds.minX, 1, widthAlongGrowth);
+      ext.mesh.position.set(
+        (anchor.baseBounds.minX + anchor.baseBounds.maxX) / 2,
+        -0.055,
+        extent.minZ + widthAlongGrowth / 2,
+      );
+    }
+    ext.mesh.updateMatrix();
+  };
+
+  return {
+    applyLayout: applyDeskFloor,
+    setOccupants,
+    followGround: (x, z, extent) => {
+      ground.position.set(x, -0.01, z);
+      ground.scale.setScalar(extent);
+    },
+  };
 }
 
-function buildFloor(kit: MeshKit): THREE.Group {
-  const group = new THREE.Group();
-  const base = kit.mesh(
-    new THREE.BoxGeometry(FLOOR.width + 0.4, 0.6, FLOOR.depth + 0.4),
-    COLORS.diorama,
-    [0, -0.42, 0],
-    { castShadow: false },
+/** Outdoor ground plane following the camera; scaled per frame, never frozen. */
+function buildGround(): THREE.Mesh {
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(1, 1),
+    new THREE.MeshStandardMaterial({ color: GROUND_COLOR, roughness: 1 }),
   );
-  group.add(base);
-
-  const plankTexture = createPlankTexture();
-  const floorMat = new THREE.MeshStandardMaterial({ map: plankTexture, roughness: 0.82 });
-  const floor = new THREE.Mesh(new THREE.BoxGeometry(FLOOR.width, 0.12, FLOOR.depth), floorMat);
-  floor.position.y = -0.06;
-  floor.receiveShadow = true;
-  group.add(floor);
-  return group;
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = -0.01;
+  ground.receiveShadow = true;
+  return ground;
 }
 
-function buildWalls(kit: MeshKit): THREE.Group {
+interface WoodFloor {
+  group: THREE.Group;
+  deskMesh: THREE.Mesh;
+  deskTexture: THREE.CanvasTexture;
+}
+
+/** One wood patch per floorRect; unit geometry scaled per rect, own plank repeat. */
+function buildWoodFloor(layout: OfficeLayout): WoodFloor {
   const group = new THREE.Group();
-  const halfW = FLOOR.width / 2;
-  const halfD = FLOOR.depth / 2;
-
-  group.add(
-    kit.mesh(new THREE.BoxGeometry(FLOOR.width, WALL_HEIGHT, WALL_THICKNESS), COLORS.wall, [
-      0,
-      WALL_HEIGHT / 2,
-      -halfD - WALL_THICKNESS / 2,
-    ]),
-    kit.mesh(
-      new THREE.BoxGeometry(WALL_THICKNESS, WALL_HEIGHT, FLOOR.depth + WALL_THICKNESS),
-      COLORS.wall,
-      [-halfW - WALL_THICKNESS / 2, WALL_HEIGHT / 2, -WALL_THICKNESS / 2],
-    ),
-    kit.mesh(new THREE.BoxGeometry(FLOOR.width, 0.16, 0.06), COLORS.baseboard, [
-      0,
-      0.08,
-      -halfD + 0.03,
-    ]),
-    kit.mesh(new THREE.BoxGeometry(0.06, 0.16, FLOOR.depth), COLORS.baseboard, [
-      -halfW + 0.03,
-      0.08,
-      0,
-    ]),
-  );
-
-  const skyTexture = createSkyTexture();
-  const paneMat = new THREE.MeshBasicMaterial({ map: skyTexture });
-  for (const x of [-3.2, 1.6, 6.4]) {
-    group.add(buildWindow(kit, paneMat, 2.3, 1.6, [x, 1.75, -halfD + 0.02], 0));
+  let deskMesh: THREE.Mesh | null = null;
+  let deskTexture: THREE.CanvasTexture | null = null;
+  for (let index = 0; index < layout.floorRects.length; index++) {
+    const rect = layout.floorRects[index];
+    if (!rect) continue;
+    const texture = createPlankTexture();
+    const material = new THREE.MeshStandardMaterial({ map: texture, roughness: 0.82 });
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 0.12, 1), material);
+    const width = rect.maxX - rect.minX;
+    const depth = rect.maxZ - rect.minZ;
+    mesh.scale.set(width, 1, depth);
+    mesh.position.set((rect.minX + rect.maxX) / 2, -0.06, (rect.minZ + rect.maxZ) / 2);
+    texture.repeat.set(width / 4, depth / 4);
+    mesh.receiveShadow = true;
+    group.add(mesh);
+    if (index === DESK_FLOOR_INDEX) {
+      deskMesh = mesh;
+      deskTexture = texture;
+    }
   }
-  group.add(buildWindow(kit, paneMat, 2.6, 1.6, [-halfW + 0.02, 1.75, 3.2], Math.PI / 2));
+  if (!deskMesh || !deskTexture) throw new Error("layout is missing its desk floor rect");
+  return { group, deskMesh, deskTexture };
+}
 
-  const posterColors = [0xf4b6a6, 0xa7c8e8, 0xc9e2b3];
-  posterColors.forEach((color, i) => {
-    const poster = kit.mesh(new THREE.BoxGeometry(0.04, 0.7, 0.5), color, [
-      -halfW + 0.05,
-      1.9 - (i % 2) * 0.25,
-      -3.4 + i * 0.75,
-    ]);
-    group.add(poster);
-  });
+/** Unit wooden patch used for zone overflow floors (scaled in setOccupants). */
+function buildExtensionFloor(): THREE.Mesh {
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 0.11, 1),
+    new THREE.MeshStandardMaterial({ color: COLORS.oak, roughness: 0.82 }),
+  );
+  mesh.position.y = -0.055;
+  mesh.receiveShadow = true;
+  mesh.visible = false;
+  return mesh;
+}
+
+/**
+ * Low stone curbs along edges of the given floor rects that face open ground
+ * (not another floor rect) — the open-world replacement for walls.
+ */
+function buildCurbs(
+  kit: MeshKit,
+  floorRects: readonly Rect[],
+  indices: readonly number[],
+): THREE.Group {
+  const group = new THREE.Group();
+  const onFloor = (x: number, z: number): boolean =>
+    floorRects.some((r) => x >= r.minX && x <= r.maxX && z >= r.minZ && z <= r.maxZ);
+  for (const index of indices) {
+    const rect = floorRects[index];
+    if (!rect) continue;
+    addCurbRun(group, kit, rect, true, rect.minZ, -1, onFloor);
+    addCurbRun(group, kit, rect, true, rect.maxZ, 1, onFloor);
+    addCurbRun(group, kit, rect, false, rect.minX, -1, onFloor);
+    addCurbRun(group, kit, rect, false, rect.maxX, 1, onFloor);
+  }
   return group;
 }
 
-function buildWindow(
+const CURB_STEP = 0.5;
+
+/** One curb box per maximal run of exposed edge samples along `fixed`. */
+function addCurbRun(
+  group: THREE.Group,
   kit: MeshKit,
-  paneMat: THREE.Material,
-  width: number,
-  height: number,
-  position: readonly [number, number, number],
-  rotationY: number,
-): THREE.Group {
-  const win = new THREE.Group();
-  win.add(
-    kit.mesh(new THREE.BoxGeometry(width + 0.16, height + 0.16, 0.08), COLORS.frame, [0, 0, 0]),
-  );
-  const pane = new THREE.Mesh(new THREE.PlaneGeometry(width, height), paneMat);
-  pane.position.z = 0.045;
-  win.add(pane);
-  win.add(
-    kit.mesh(new THREE.BoxGeometry(0.05, height, 0.04), COLORS.frame, [0, 0, 0.06]),
-    kit.mesh(new THREE.BoxGeometry(width, 0.05, 0.04), COLORS.frame, [0, 0, 0.06]),
-    kit.mesh(new THREE.BoxGeometry(width + 0.3, 0.06, 0.2), COLORS.frame, [
-      0,
-      -height / 2 - 0.1,
-      0.1,
-    ]),
-  );
-  win.position.set(position[0], position[1], position[2]);
-  win.rotation.y = rotationY;
-  return win;
+  rect: Rect,
+  horizontal: boolean,
+  fixed: number,
+  outward: -1 | 1,
+  onFloor: (x: number, z: number) => boolean,
+): void {
+  const from = horizontal ? rect.minX : rect.minZ;
+  const to = horizontal ? rect.maxX : rect.maxZ;
+  const segments = Math.max(1, Math.round((to - from) / CURB_STEP));
+  let runStart: number | null = null;
+  for (let i = 0; i <= segments; i++) {
+    const t = from + i * CURB_STEP;
+    const probe = horizontal
+      ? { x: t, z: fixed + outward * 0.25 }
+      : { x: fixed + outward * 0.25, z: t };
+    const exposed = !onFloor(probe.x, probe.z);
+    if (exposed && runStart === null) runStart = t;
+    if (runStart !== null && (!exposed || i === segments)) {
+      const end = exposed ? t : t - CURB_STEP;
+      const length = Math.max(0.25, end - runStart);
+      const mid = (runStart + end) / 2;
+      group.add(
+        horizontal
+          ? kit.mesh(new THREE.BoxGeometry(length, 0.04, 0.2), CURB_COLOR, [mid, 0.02, fixed], {
+              castShadow: false,
+            })
+          : kit.mesh(new THREE.BoxGeometry(0.2, 0.04, length), CURB_COLOR, [fixed, 0.02, mid], {
+              castShadow: false,
+            }),
+      );
+      runStart = null;
+    }
+  }
 }
 
+/** Zone furniture placed once at the static anchors. */
+function buildZoneFurniture(kit: MeshKit, layout: OfficeLayout): THREE.Group {
+  const group = new THREE.Group();
+  const kanban = buildKanbanBoard(kit);
+  const director = buildDirectorCorner(kit);
+  const lounge = buildLounge(kit);
+  const coffee = buildCoffeeCorner(kit);
+  kanban.position.set(layout.zones.kanban.center.x, 0, layout.zones.kanban.center.z);
+  director.position.set(layout.zones.director.center.x, 0, layout.zones.director.center.z);
+  lounge.position.set(layout.zones.lounge.center.x, 0, layout.zones.lounge.center.z);
+  coffee.position.set(layout.zones.coffee.center.x, 0, layout.zones.coffee.center.z);
+  group.add(kanban, director, lounge, coffee);
+  return group;
+}
+
+/** Different-coloured rugs make the zones readable without walls (FR-003). */
+function buildZoneRugs(kit: MeshKit, layout: OfficeLayout): THREE.Group {
+  const group = new THREE.Group();
+  const rug = (kind: ZoneKind, w: number, d: number, color: number) => {
+    const anchor = layout.zones[kind];
+    group.add(
+      kit.mesh(new THREE.BoxGeometry(w, 0.02, d), color, [anchor.center.x, 0.01, anchor.center.z], {
+        castShadow: false,
+      }),
+    );
+  };
+  rug("lounge", 4.2, 4.4, COLORS.rugLounge);
+  rug("kanban", 4.4, 1.6, COLORS.rugKanban);
+  rug("coffee", 1.3, 2.6, COLORS.rugCoffee);
+  rug("director", 2.6, 2.1, COLORS.rugDirector);
+  return group;
+}
+
+function buildPlanterRing(kit: MeshKit, layout: OfficeLayout): THREE.Group {
+  const group = new THREE.Group();
+  const planter = (kind: ZoneKind, dx: number, dz: number, scale: number, color?: number) => {
+    const anchor = layout.zones[kind];
+    const plant = createPlant(kit, scale, color);
+    plant.position.set(anchor.center.x + dx, 0, anchor.center.z + dz);
+    group.add(plant);
+  };
+  planter("war_room", -3.1, 3.1, 1.0);
+  planter("lounge", 2.2, -1.9, 0.9, 0x8cc08a);
+  planter("kanban", 2.4, 0.7, 1.1);
+  planter("director", 1.5, 0.9, 0.85);
+  planter("coffee", 0.7, -1.4, 0.9);
+  return group;
+}
+
+/** Kanban standing on walnut feet — no wall to hang on in the open world (T019). */
 function buildKanbanBoard(kit: MeshKit): THREE.Group {
   const board = new THREE.Group();
-  board.add(kit.mesh(new THREE.BoxGeometry(3.0, 1.5, 0.06), COLORS.cork, [0, 0, 0]));
-  board.add(kit.mesh(new THREE.BoxGeometry(3.12, 0.06, 0.1), COLORS.walnut, [0, 0.78, 0.02]));
+  board.add(
+    kit.mesh(new THREE.BoxGeometry(0.12, 0.8, 0.26), COLORS.walnut, [-1.2, 0.4, 0]),
+    kit.mesh(new THREE.BoxGeometry(0.12, 0.8, 0.26), COLORS.walnut, [1.2, 0.4, 0]),
+    kit.mesh(new THREE.BoxGeometry(3.0, 1.5, 0.06), COLORS.cork, [0, 1.55, 0]),
+    kit.mesh(new THREE.BoxGeometry(3.12, 0.06, 0.1), COLORS.walnut, [0, 2.33, 0.02]),
+  );
   for (let col = 0; col < 4; col++) {
     for (let row = 0; row < 3; row++) {
       if ((col + row) % 3 === 2) continue;
       const color = STICKY_COLORS[(col * 3 + row) % STICKY_COLORS.length] ?? 0xffe08a;
       const note = kit.mesh(new THREE.BoxGeometry(0.42, 0.32, 0.02), color, [
         -1.08 + col * 0.72,
-        0.42 - row * 0.42,
+        1.97 - row * 0.42,
         0.045,
       ]);
       note.rotation.z = ((col * 7 + row * 3) % 5) * 0.025 - 0.05;
       board.add(note);
     }
   }
-  board.position.set(KANBAN_BOARD_CENTER.x, 1.65, KANBAN_BOARD_CENTER.z + 0.05);
   return board;
 }
 
@@ -188,36 +352,32 @@ function buildDirectorCorner(kit: MeshKit): THREE.Group {
   chair.position.set(0, 0, 0.85);
   chair.rotation.y = Math.PI;
   corner.add(chair);
-  corner.position.set(-3.4, 0, -5.7);
   return corner;
 }
 
+/** Sofa on the west end facing east; overflow seats face it from the east side. */
 function buildLounge(kit: MeshKit): THREE.Group {
   const lounge = new THREE.Group();
   lounge.add(
-    kit.mesh(new THREE.BoxGeometry(4.2, 0.02, 2.4), COLORS.rugLounge, [0, 0.012, 0], {
-      castShadow: false,
-    }),
-    kit.mesh(new THREE.BoxGeometry(3.4, 0.42, 0.9), COLORS.sofa, [0, 0.21, 0.55]),
-    kit.mesh(new THREE.BoxGeometry(3.4, 0.62, 0.26), COLORS.sofa, [0, 0.62, 0.92]),
-    kit.mesh(new THREE.BoxGeometry(0.26, 0.6, 0.9), COLORS.sofa, [-1.7, 0.3, 0.55]),
-    kit.mesh(new THREE.BoxGeometry(0.26, 0.6, 0.9), COLORS.sofa, [1.7, 0.3, 0.55]),
+    kit.mesh(new THREE.BoxGeometry(3.4, 0.42, 0.9), COLORS.sofa, [-1.4, 0.21, 0]),
+    kit.mesh(new THREE.BoxGeometry(3.4, 0.62, 0.26), COLORS.sofa, [-1.75, 0.62, 0]),
+    kit.mesh(new THREE.BoxGeometry(0.26, 0.6, 0.9), COLORS.sofa, [-1.4, 0.3, -0.5]),
+    kit.mesh(new THREE.BoxGeometry(0.26, 0.6, 0.9), COLORS.sofa, [-1.4, 0.3, 0.5]),
   );
-  for (const x of [-1.05, 0, 1.05]) {
-    lounge.add(kit.mesh(new THREE.BoxGeometry(1.0, 0.12, 0.72), COLORS.cushion, [x, 0.48, 0.5]));
+  for (const z of [-0.5, 0, 0.5]) {
+    lounge.add(kit.mesh(new THREE.BoxGeometry(1.0, 0.12, 0.72), COLORS.cushion, [-1.05, 0.48, z]));
   }
   lounge.add(
-    kit.mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.6, 8), 0x3d4252, [2.3, 0.8, 0.8]),
-    kit.mesh(new THREE.ConeGeometry(0.32, 0.36, 16, 1, true), COLORS.lampGlow, [2.3, 1.62, 0.8], {
+    kit.mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.6, 8), 0x3d4252, [1.6, 0.8, 1.6]),
+    kit.mesh(new THREE.ConeGeometry(0.32, 0.36, 16, 1, true), COLORS.lampGlow, [1.6, 1.62, 1.6], {
       emissive: COLORS.lampGlow,
       emissiveIntensity: 0.9,
     }),
-    kit.mesh(new THREE.CylinderGeometry(0.25, 0.25, 0.04, 16), 0x3d4252, [2.3, 0.02, 0.8]),
+    kit.mesh(new THREE.CylinderGeometry(0.25, 0.25, 0.04, 16), 0x3d4252, [1.6, 0.02, 1.6]),
   );
   const plant = createPlant(kit, 0.8, 0x8cc08a);
-  plant.position.set(-2.3, 0, 0.8);
+  plant.position.set(1.6, 0, -1.6);
   lounge.add(plant);
-  lounge.position.set(LOUNGE_CENTER.x, 0, LOUNGE_CENTER.z - 0.4);
   return lounge;
 }
 
@@ -242,7 +402,6 @@ function buildCoffeeCorner(kit: MeshKit): THREE.Group {
       ]),
     );
   });
-  corner.position.set(-9.45, 0, 5.4);
   return corner;
 }
 
@@ -281,26 +440,7 @@ function createPlankTexture(): THREE.CanvasTexture {
   const texture = new THREE.CanvasTexture(canvas);
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
-  texture.repeat.set(5, 3.5);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.anisotropy = 4;
-  return texture;
-}
-
-function createSkyTexture(): THREE.CanvasTexture {
-  const canvas = document.createElement("canvas");
-  canvas.width = 8;
-  canvas.height = 128;
-  const ctx = canvas.getContext("2d");
-  if (ctx) {
-    const gradient = ctx.createLinearGradient(0, 0, 0, 128);
-    gradient.addColorStop(0, "#9fb4e8");
-    gradient.addColorStop(0.55, "#f2b8c6");
-    gradient.addColorStop(1, "#ffd6a5");
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, 8, 128);
-  }
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
 }

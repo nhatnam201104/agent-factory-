@@ -73,6 +73,7 @@ export function AgentTag(props: {
       >
         <span className="agent-tag__dot" aria-hidden="true" />
         <span className="agent-tag__name">{employee.display_name}</span>
+        <span className="agent-tag__code">{employee.employee_code}</span>
         <span className="agent-tag__emoji" aria-hidden="true">
           {status.emoji}
         </span>

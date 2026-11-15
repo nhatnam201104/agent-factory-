@@ -9,11 +9,8 @@ import {
   workingEmployeeIds,
 } from "../../apps/web-arena/src/scene3d/agentStatus.js";
 import { planPlacements } from "../../apps/web-arena/src/scene3d/avatarMotion.js";
-import {
-  WAR_ROOM_CENTER,
-  deskPosition,
-  warRoomPosition,
-} from "../../apps/web-arena/src/scene3d/layout.js";
+import { computeOfficeLayout, deskSlotPosition } from "../../apps/web-arena/src/scene3d/layout.js";
+import { warRoomSeat } from "../../apps/web-arena/src/scene3d/zoneSeating.js";
 
 const NOW = "2026-11-14T00:00:00.000Z";
 
@@ -133,18 +130,22 @@ describe("ticket helpers", () => {
 
 describe("office layout", () => {
   it("gives every desk slot a distinct spot", () => {
-    const spots = Array.from({ length: 12 }, (_, i) => deskPosition(i));
+    const spots = Array.from({ length: 12 }, (_, i) => deskSlotPosition(i));
     const keys = new Set(spots.map((p) => `${p.x.toFixed(2)}:${p.z.toFixed(2)}`));
     expect(keys.size).toBe(12);
   });
 
   it("seats meeting participants around the war-room table", () => {
-    const seat = warRoomPosition(0, 3);
-    const radius = Math.hypot(seat.x - WAR_ROOM_CENTER.x, seat.z - WAR_ROOM_CENTER.z);
-    expect(radius).toBeCloseTo(2.15, 5);
+    const layout = computeOfficeLayout(3);
+    const anchor = layout.zones.war_room;
+    const seat = warRoomSeat(anchor, 0, 3);
+    const radius = Math.hypot(seat.point.x - anchor.center.x, seat.point.z - anchor.center.z);
+    expect(radius).toBeCloseTo(2.6, 5);
   });
 
   it("routes meeting agents to the table and others to their desks", () => {
+    const layout = computeOfficeLayout(3);
+    const anchor = layout.zones.war_room;
     const desk = { x: -8.3, z: -2.4 };
     const placements = planPlacements(
       [
@@ -153,9 +154,10 @@ describe("office layout", () => {
         employee({ id: "c", spatial_zone: "lounge_offline" }),
       ],
       () => desk,
+      layout,
     );
     expect(placements.get("a")?.target).toEqual(desk);
-    expect(placements.get("b")?.target).toEqual(warRoomPosition(0, 1));
+    expect(placements.get("b")?.target).toEqual(warRoomSeat(anchor, 0, 1).point);
     expect(placements.get("c")?.target).not.toEqual(desk);
   });
 });

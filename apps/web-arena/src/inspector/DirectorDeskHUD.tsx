@@ -1,6 +1,7 @@
 import type { SessionEmployee, WarRoomMeeting } from "@factory-arena/protocol";
 import type React from "react";
 import { useState } from "react";
+import { findOpenRoom } from "../council/roomStatus.js";
 
 export function DirectorDeskHUD(props: {
   employees: SessionEmployee[];
@@ -16,6 +17,8 @@ export function DirectorDeskHUD(props: {
     action: "inject_guidance" | "approve_decision" | "reject_and_reopen" | "abort_room",
     guidance?: string,
   ) => void;
+  /** Ends every open meeting and sends all participants back to their desks. */
+  onDisbandAll: () => void;
 }) {
   const [commandMode, setCommandMode] = useState<
     "direct_employee" | "council_debate" | "kanban_backlog"
@@ -27,7 +30,7 @@ export function DirectorDeskHUD(props: {
   const [guidanceText, setGuidanceText] = useState("");
 
   const totalCost = props.employees.reduce((s, e) => s + e.session_cost_usd, 0);
-  const activeRoom = props.rooms[0];
+  const activeRoom = findOpenRoom(props.rooms);
   const effectiveTargetId = targetEmpId || props.selectedEmployeeId || props.employees[0]?.id || "";
 
   const handleSubmitCommand = async (e: React.FormEvent) => {
@@ -209,6 +212,15 @@ export function DirectorDeskHUD(props: {
               onClick={() => props.onSteerRoom(activeRoom.id, "approve_decision")}
             >
               ✅ Ký duyệt Human Gate
+            </button>
+            <button
+              type="button"
+              className="btn"
+              data-testid="btn-disband-room"
+              title="Kết thúc cuộc họp và cho mọi người về lại bàn làm việc"
+              onClick={props.onDisbandAll}
+            >
+              🛑 Giải tán
             </button>
           </div>
         </div>

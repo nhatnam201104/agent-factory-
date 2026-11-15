@@ -1,4 +1,4 @@
-/* Cozy lo-fi office diorama: warm sky backdrop, paper name tags, frosted agent panel. */
+/* Open-world office: haze horizon behind an opaque canvas, paper name tags, frosted agent panel. */
 .office-viewport {
   --scene-ink: #2d2a3e;
   --scene-ink-soft: #6b6580;
@@ -14,8 +14,9 @@
   border-radius: 18px;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  background: radial-gradient(120% 70% at 20% 0%, rgba(255, 236, 214, 0.9) 0%, transparent 60%),
-    linear-gradient(180deg, #f6d7c6 0%, #eccbd8 48%, #c6d0ee 100%);
+  /* Opaque haze (matches scene background/fog in officeEnvironment.ts) so the
+     canvas never reveals a gradient void before its first WebGL frame. */
+  background: #f1d9cf;
   box-shadow: 0 18px 40px rgba(2, 6, 20, 0.45);
   isolation: isolate;
 }
@@ -118,6 +119,18 @@
   transition: transform 160ms var(--ease-soft), box-shadow 160ms var(--ease-soft), border-color
     160ms var(--ease-soft);
 }
+/* Short employee code: hidden at full density, shown when tags collapse (R6). */
+.agent-tag__code {
+  display: none;
+  font-size: 0.64rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  opacity: 0.75;
+}
+.agent-tag.is-offscreen {
+  visibility: hidden;
+  pointer-events: none;
+}
 .agent-tag__dot {
   width: 9px;
   height: 9px;
@@ -153,6 +166,25 @@
 }
 .agent-tag.is-offline {
   filter: saturate(0.6);
+}
+
+/* Compact label density: status dot + short code only; hover/selection expands (R6). */
+.office-viewport[data-density="compact"] .agent-tag__name,
+.office-viewport[data-density="compact"] .agent-tag__emoji {
+  display: none;
+}
+.office-viewport[data-density="compact"] .agent-tag__code {
+  display: inline;
+}
+.office-viewport[data-density="compact"] .agent-tag.is-hovered .agent-tag__name,
+.office-viewport[data-density="compact"] .agent-tag.is-selected .agent-tag__name,
+.office-viewport[data-density="compact"] .agent-tag.is-hovered .agent-tag__emoji,
+.office-viewport[data-density="compact"] .agent-tag.is-selected .agent-tag__emoji {
+  display: inline;
+}
+.office-viewport[data-density="compact"] .agent-tag.is-hovered .agent-tag__code,
+.office-viewport[data-density="compact"] .agent-tag.is-selected .agent-tag__code {
+  display: none;
 }
 
 /* Flat fallback when WebGL is unavailable */

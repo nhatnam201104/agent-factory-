@@ -810,6 +810,10 @@ export class CouncilStateMachine {
         .run(JSON.stringify(updatedGuidance), JSON.stringify(nextConfig), room.id);
       this.startRound(room.id, nextNum, "proposal", "sealed");
     } else if (params.action === "abort_room") {
+      // A finished room no longer owns its participants; they may already sit in a newer meeting.
+      if (room.status === "aborted" || room.status === "completed") {
+        throw new ArenaClientError(`Room ${room.id} is already ${room.status}`, 409);
+      }
       this.db.prepare(`UPDATE war_room_meetings SET status = 'aborted' WHERE id = ?`).run(room.id);
       this.roster.moveEmployeesToZone(room.participant_ids, "at_desk", "idle");
     }

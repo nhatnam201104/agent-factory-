@@ -10,6 +10,7 @@ import {
   statusStyle,
   workingEmployeeIds,
 } from "./agentStatus.js";
+import { BASE_ZOOM, tagDensity } from "./cameraFit.js";
 import { type SceneRuntime, WebGLUnavailableError, startOfficeScene } from "./sceneRuntime.js";
 import "./office-scene.css";
 
@@ -81,7 +82,7 @@ export function OfficeScene3D(props: OfficeScene3DProps) {
         getWorkingIds: () => workingRef.current,
         tagElements,
         onPick: openAgent,
-        onZoomChange: (relative) => setZoomPct(Math.round(relative * 100)),
+        onZoomChange: (percent) => setZoomPct(percent),
       });
     } catch (error: unknown) {
       // Always keep the office usable via the flat roster, but surface real bugs loudly.
@@ -99,6 +100,7 @@ export function OfficeScene3D(props: OfficeScene3DProps) {
   }, [openAgent, tagElements]);
 
   const pendingIds = new Set(pendingPermissions.map((p) => p.session_employee_id));
+  const density = tagDensity((BASE_ZOOM * zoomPct) / 100);
   const statuses = new Map(
     employees.map((e) => [e.id, deriveAgentStatus(e, pendingIds, workingIds)]),
   );
@@ -107,10 +109,21 @@ export function OfficeScene3D(props: OfficeScene3DProps) {
   const panelEmployee = panelOpen ? employees.find((e) => e.id === selectedEmployeeId) : undefined;
   const hasPanel = Boolean(panelEmployee);
 
-  // Slide the framing left while the panel is open so agents on the right stay reachable.
+  // Slide the framing left while the panel is open so agents on the right stay
+  // reachable. Re-evaluated on resize/fullscreen too, so the inset tracks the
+  // docked breakpoint as the window geometry changes.
   useEffect(() => {
-    const docked = (wrapRef.current?.clientWidth ?? 0) < PANEL_DOCKED_BREAKPOINT_PX;
-    runtimeRef.current?.setRightInset(hasPanel && !docked ? PANEL_INSET_PX : 0);
+    const applyInset = () => {
+      const docked = (wrapRef.current?.clientWidth ?? 0) < PANEL_DOCKED_BREAKPOINT_PX;
+      runtimeRef.current?.setRightInset(hasPanel && !docked ? PANEL_INSET_PX : 0);
+    };
+    applyInset();
+    window.addEventListener("resize", applyInset);
+    document.addEventListener("fullscreenchange", applyInset);
+    return () => {
+      window.removeEventListener("resize", applyInset);
+      document.removeEventListener("fullscreenchange", applyInset);
+    };
   }, [hasPanel]);
 
   useEffect(() => {
@@ -135,6 +148,8 @@ export function OfficeScene3D(props: OfficeScene3DProps) {
       className={`office-viewport${webglFailed ? " is-flat" : ""}`}
       ref={wrapRef}
       data-testid="office-3d-viewport"
+      data-agent-count={employees.length}
+      data-density={density}
     >
       <canvas
         ref={canvasRef}
@@ -200,7 +215,11 @@ export function OfficeScene3D(props: OfficeScene3DProps) {
               +
             </button>
           </div>
-          <button type="button" onClick={() => runtimeRef.current?.resetView()}>
+          <button
+            type="button"
+            data-testid="office-reset-view"
+            onClick={() => runtimeRef.current?.resetView()}
+          >
             ⟲ Góc nhìn
           </button>
           <button

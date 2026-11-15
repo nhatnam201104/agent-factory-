@@ -2,13 +2,8 @@ import type { SessionEmployee } from "@factory-arena/protocol";
 import type * as THREE from "three";
 import type { AvatarSceneEntry } from "./EmployeeAvatar.js";
 import type { AgentActivity } from "./agentStatus.js";
-import {
-  type FloorPoint,
-  WAR_ROOM_CENTER,
-  kanbanPosition,
-  loungePosition,
-  warRoomPosition,
-} from "./layout.js";
+import type { FloorPoint, OfficeLayout } from "./layout.js";
+import { kanbanSeat, loungeSeat, warRoomSeat } from "./zoneSeating.js";
 
 const WALK_SPEED = 3.2;
 const ARRIVE_EPSILON = 0.04;
@@ -31,33 +26,58 @@ export interface AvatarFrameState {
   hovered: boolean;
 }
 
+/** Splits the roster into zone groups; earlier groups win (meeting > lounge > kanban). */
+function partitionZones(employees: readonly SessionEmployee[]): {
+  meeting: SessionEmployee[];
+  lounge: SessionEmployee[];
+  kanban: SessionEmployee[];
+} {
+  const meeting = employees.filter(
+    (e) => e.spatial_zone === "at_war_room_table" || e.spatial_zone === "walking_to_war_room",
+  );
+  const taken = new Set(meeting.map((e) => e.id));
+  const lounge = employees.filter(
+    (e) =>
+      !taken.has(e.id) &&
+      (e.spatial_zone === "lounge_offline" || e.connection_status === "offline"),
+  );
+  for (const e of lounge) taken.add(e.id);
+  const kanban = employees.filter((e) => !taken.has(e.id) && e.spatial_zone === "at_kanban_wall");
+  return { meeting, lounge, kanban };
+}
+
+/** How many agents currently belong to each temporary zone (matches seat placement). */
+export function zoneCounts(employees: readonly SessionEmployee[]): {
+  war_room: number;
+  lounge: number;
+  kanban: number;
+} {
+  const { meeting, lounge, kanban } = partitionZones(employees);
+  return { war_room: meeting.length, lounge: lounge.length, kanban: kanban.length };
+}
+
 /** Decide where every employee should stand this frame, grouping shared zones into seats. */
 export function planPlacements(
   employees: readonly SessionEmployee[],
   deskOf: (employeeId: string) => FloorPoint | undefined,
+  layout: OfficeLayout,
 ): Map<string, Placement> {
-  const meeting = employees.filter(
-    (e) => e.spatial_zone === "at_war_room_table" || e.spatial_zone === "walking_to_war_room",
-  );
-  const lounge = employees.filter(
-    (e) => e.spatial_zone === "lounge_offline" || e.connection_status === "offline",
-  );
-  const kanban = employees.filter((e) => e.spatial_zone === "at_kanban_wall");
+  const { meeting, lounge, kanban } = partitionZones(employees);
   const placements = new Map<string, Placement>();
 
   meeting.forEach((emp, seat) => {
-    const target = warRoomPosition(seat, meeting.length);
-    const facing = Math.atan2(WAR_ROOM_CENTER.x - target.x, WAR_ROOM_CENTER.z - target.z);
-    placements.set(emp.id, { target, facing });
+    const target = warRoomSeat(layout.zones.war_room, seat, meeting.length);
+    placements.set(emp.id, { target: target.point, facing: target.facing });
   });
   lounge.forEach((emp, seat) => {
-    if (!placements.has(emp.id))
-      placements.set(emp.id, { target: loungePosition(seat), facing: 0 });
+    if (placements.has(emp.id)) return;
+    const target = loungeSeat(layout.zones.lounge, seat, lounge.length);
+    placements.set(emp.id, { target: target.point, facing: target.facing });
   });
   kanban.forEach((emp, seat) => {
-    if (!placements.has(emp.id)) {
-      placements.set(emp.id, { target: kanbanPosition(seat), facing: Math.PI });
-    }
+    if (placements.has(emp.id)) return;
+    const target = kanbanSeat(layout.zones.kanban, seat, kanban.length);
+    placements.set(emp.id, { target: target.point, facing: target.facing });
   });
   for (const emp of employees) {
     if (placements.has(emp.id)) continue;
