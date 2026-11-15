@@ -1,33 +1,31 @@
 import type { PermissionRequest, SessionEmployee } from "@factory-arena/protocol";
 import * as THREE from "three";
-import { type AvatarSceneEntry, createDeskAndEmployeeAvatar } from "./EmployeeAvatar.js";
-import { buildGlassWarRoom } from "./GlassWarRoom.js";
+import {
+  type AvatarSceneEntry,
+  createDeskAndEmployeeAvatar,
+  relocateDesk,
+} from "./EmployeeAvatar.js";
+import { type WarRoomHandle, buildGlassWarRoom } from "./GlassWarRoom.js";
 import { deriveAgentStatus } from "./agentStatus.js";
-import { planPlacements, updateAvatar } from "./avatarMotion.js";
-import { createMeshKit, disposeObject } from "./meshKit.js";
-import { buildOfficeEnvironment } from "./officeEnvironment.js";
+import { planPlacements, updateAvatar, zoneCounts } from "./avatarMotion.js";
+import { CAMERA_DISTANCE, type CameraRig, createCameraRig } from "./cameraRig.js";
+import { reconcileDeskSlots } from "./deskAssignment.js";
+import { type OfficeLayout, type Rect, computeOfficeLayout, deskSlotPosition } from "./layout.js";
+import { type MeshKit, createMeshKit, disposeObject } from "./meshKit.js";
+import { HAZE, type OfficeEnvironmentHandle, buildOfficeEnvironment } from "./officeEnvironment.js";
+import { zoneExtent } from "./zoneSeating.js";
 
-const CAMERA_DISTANCE = 40;
-const CAMERA_TARGET = new THREE.Vector3(-1.2, 0.3, -0.2);
-const DEFAULT_VIEW = { theta: 0.62, phi: 0.98, zoom: 1.15 } as const;
-const PHI_MIN = 0.55;
-const PHI_MAX = 1.25;
-const ZOOM_MIN = 0.7;
-const ZOOM_MAX = 3.2;
-const ZOOM_WHEEL_SENSITIVITY = 0.0018;
-const ZOOM_BUTTON_STEP = 1.35;
-/** Higher = snappier zoom easing (per second). */
-const ZOOM_EASE = 11;
-const FOCUS_EASE = 7;
-const WHEEL_LINE_PX = 16;
-const FOCUS_BOUNDS = { x: 10, yMin: -4, yMax: 6, z: 8 } as const;
-const MIN_HALF_HEIGHT = 7.3;
-const HALF_WIDTH_TO_FIT = 12.4;
 const CLICK_SLOP_PX = 5;
 const ACTIVE_FRAME_MS = 1000 / 30;
 const HIDDEN_FRAME_MS = 500;
 const MAX_DT = 0.1;
 const TAG_ANCHOR_Y = 2.0;
+const FOG_REACH = 60;
+const WHEEL_SENSITIVITY = 0.0018;
+const WHEEL_LINE_PX = 16;
+const SHADOW_HALF_MAX = 40;
+const SHADOW_HALF_PAD = 2;
+const TAG_OFFSCREEN_MARGIN = 1.05;
 
 export interface SceneInputs {
   canvas: HTMLCanvasElement;
@@ -40,8 +38,8 @@ export interface SceneInputs {
   /** HTML name tags keyed by employee id; positioned every frame. */
   tagElements: ReadonlyMap<string, HTMLElement>;
   onPick: (employeeId: string) => void;
-  /** Called with the zoom level (1 = default framing) whenever the user changes it. */
-  onZoomChange?: (relativeZoom: number) => void;
+  /** Called with the absolute zoom percentage (BASE_ZOOM = 100%) whenever it changes. */
+  onZoomChange?: (percent: number) => void;
 }
 
 export interface SceneRuntime {
@@ -66,7 +64,7 @@ function createRenderer(canvas: HTMLCanvasElement): THREE.WebGLRenderer {
     return new THREE.WebGLRenderer({
       canvas,
       antialias: true,
-      alpha: true,
+      alpha: false,
       powerPreference: "low-power",
     });
   } catch (error: unknown) {
@@ -74,10 +72,16 @@ function createRenderer(canvas: HTMLCanvasElement): THREE.WebGLRenderer {
   }
 }
 
-/**
- * Throws {@link WebGLUnavailableError} when WebGL is missing so the caller can fall back to a
- * flat roster; any other error is a genuine bug and is re-thrown after releasing the renderer.
- */
+function configureRenderer(renderer: THREE.WebGLRenderer): void {
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
+}
+
+/** Throws {@link WebGLUnavailableError} when WebGL is missing so the caller can fall back to a
+ * flat roster; any other error is a genuine bug and is re-thrown after releasing the renderer. */
 export function startOfficeScene(inputs: SceneInputs): SceneRuntime {
   const renderer = createRenderer(inputs.canvas);
   try {
@@ -88,322 +92,196 @@ export function startOfficeScene(inputs: SceneInputs): SceneRuntime {
   }
 }
 
+/** Everything the scene built once: static world, camera rig and layout state. */
+interface SceneWorld {
+  scene: THREE.Scene;
+  kit: MeshKit;
+  layout: OfficeLayout;
+  occupantCounts: { war_room: number; lounge: number; kanban: number };
+  environment: OfficeEnvironmentHandle;
+  warRoom: WarRoomHandle;
+  rig: CameraRig;
+}
+
+const unionRect = (a: Rect, b: Rect): Rect => ({
+  minX: Math.min(a.minX, b.minX),
+  maxX: Math.max(a.maxX, b.maxX),
+  minZ: Math.min(a.minZ, b.minZ),
+  maxZ: Math.max(a.maxZ, b.maxZ),
+});
+
+function footprintKey(fp: Rect): string {
+  return `${fp.minX.toFixed(1)}|${fp.maxX.toFixed(1)}|${fp.minZ.toFixed(1)}|${fp.maxZ.toFixed(1)}`;
+}
+
+/** Desk footprint plus any zone floors currently grown by occupants (T038). */
+function effectiveFootprint(world: SceneWorld): Rect {
+  let fp = world.layout.footprint;
+  fp = unionRect(fp, zoneExtent(world.layout.zones.war_room, world.occupantCounts.war_room));
+  fp = unionRect(fp, zoneExtent(world.layout.zones.lounge, world.occupantCounts.lounge));
+  fp = unionRect(fp, zoneExtent(world.layout.zones.kanban, world.occupantCounts.kanban));
+  return fp;
+}
+
+function footprintRadius(world: SceneWorld): number {
+  const fp = world.layout.footprint;
+  return Math.max(fp.maxX - fp.minX, fp.maxZ - fp.minZ) / 2;
+}
+
+/** Reset the fog band and far plane for the current footprint. */
+function applyAtmosphere(world: SceneWorld): void {
+  const near = CAMERA_DISTANCE + footprintRadius(world);
+  world.scene.fog = new THREE.Fog(HAZE, near, near + FOG_REACH);
+  world.rig.camera.far = CAMERA_DISTANCE + 4 * footprintRadius(world) + 80;
+  world.rig.camera.updateProjectionMatrix();
+}
+
+/** Shadow camera tracks the footprint (capped so shadows stay crisp). */
+function applyShadowBounds(world: SceneWorld, sun: THREE.DirectionalLight): void {
+  const fp = world.layout.footprint;
+  const centerX = (fp.minX + fp.maxX) / 2;
+  const centerZ = (fp.minZ + fp.maxZ) / 2;
+  const halfW = Math.min((fp.maxX - fp.minX) / 2 + SHADOW_HALF_PAD, SHADOW_HALF_MAX);
+  const halfH = Math.min((fp.maxZ - fp.minZ) / 2 + SHADOW_HALF_PAD, SHADOW_HALF_MAX);
+  sun.position.set(centerX - 6, 16, centerZ + 9);
+  sun.target.position.set(centerX, 0, centerZ);
+  sun.target.updateMatrixWorld();
+  sun.shadow.camera.left = -halfW;
+  sun.shadow.camera.right = halfW;
+  sun.shadow.camera.top = halfH;
+  sun.shadow.camera.bottom = -halfH;
+  sun.shadow.camera.updateProjectionMatrix();
+}
+
+function addLights(scene: THREE.Scene): THREE.DirectionalLight {
+  scene.add(new THREE.HemisphereLight(0xfff1e0, 0xb39a82, 1.25));
+
+  const sun = new THREE.DirectionalLight(0xffe2c4, 2.1);
+  sun.position.set(-6, 16, 9);
+  sun.target.position.set(0, 0, 0);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.camera.near = 1;
+  sun.shadow.camera.far = 60;
+  sun.shadow.bias = -0.0004;
+  sun.shadow.camera.updateProjectionMatrix();
+  sun.shadow.normalBias = 0.03;
+  sun.shadow.radius = 4;
+  scene.add(sun, sun.target);
+
+  const fill = new THREE.DirectionalLight(0xc7d6ff, 0.55);
+  fill.position.set(12, 8, -4);
+  scene.add(fill);
+  return sun;
+}
+
+/** Builds the scene graph, lights, camera rig and their atmosphere wiring. */
+function createSceneWorld(inputs: SceneInputs): {
+  scene: THREE.Scene;
+  sun: THREE.DirectionalLight;
+  world: SceneWorld;
+} {
+  const scene = new THREE.Scene();
+  const sun = addLights(scene);
+  const kit = createMeshKit();
+  const world: SceneWorld = {
+    scene,
+    kit,
+    layout: computeOfficeLayout(0),
+    occupantCounts: { war_room: 0, lounge: 0, kanban: 0 },
+    environment: null as unknown as OfficeEnvironmentHandle,
+    warRoom: null as unknown as WarRoomHandle,
+    rig: null as unknown as CameraRig,
+  };
+  world.environment = buildOfficeEnvironment(scene, kit, world.layout);
+  world.warRoom = buildGlassWarRoom(scene, kit, world.layout);
+  scene.background = new THREE.Color(HAZE);
+  scene.fog = new THREE.Fog(HAZE, 60, 120);
+
+  world.rig = createCameraRig({
+    getFootprint: () => effectiveFootprint(world),
+    onZoomChange: inputs.onZoomChange,
+    onCameraMoved: (focus, extent, distance) => {
+      world.environment.followGround(focus.x, focus.z, extent);
+      // Fog track follows the (zoom-dependent) camera distance so the nearest
+      // ground stays crisp while the horizon still fades into the haze.
+      const near = distance * 0.9 + footprintRadius(world) * 0.25;
+      if (scene.fog instanceof THREE.Fog) {
+        scene.fog.near = near;
+        scene.fog.far = near + FOG_REACH + footprintRadius(world);
+      }
+      world.rig.camera.far = distance + 4 * footprintRadius(world) + 80;
+      world.rig.camera.updateProjectionMatrix();
+    },
+  });
+  return { scene, sun, world };
+}
+
 function runOfficeScene(inputs: SceneInputs, renderer: THREE.WebGLRenderer): SceneRuntime {
   const { canvas, wrap } = inputs;
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.05;
+  configureRenderer(renderer);
 
-  const scene = new THREE.Scene();
-  addLights(scene);
-  const kit = createMeshKit();
-  buildOfficeEnvironment(scene, kit);
-  buildGlassWarRoom(scene, kit);
-
-  const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200);
-  const view: { theta: number; phi: number; zoom: number } = { ...DEFAULT_VIEW };
-  const size = { width: 1, height: 1 };
-  /** Point the camera orbits around; panned so zooming keeps the cursor spot fixed. */
-  const focus = CAMERA_TARGET.clone();
-  let focusGoal: THREE.Vector3 | null = null;
-  const zoom = { target: view.zoom, anchorX: 0, anchorY: 0 };
-  const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-  const camRight = new THREE.Vector3();
-  const camUp = new THREE.Vector3();
-  let rightInset = 0;
-
-  const applyCamera = () => {
-    const aspect = size.width / size.height;
-    const halfH = Math.max(MIN_HALF_HEIGHT, HALF_WIDTH_TO_FIT / aspect);
-    camera.left = -halfH * aspect;
-    camera.right = halfH * aspect;
-    camera.top = halfH;
-    camera.bottom = -halfH;
-    camera.zoom = view.zoom;
-    camera.position.set(
-      focus.x + CAMERA_DISTANCE * Math.sin(view.phi) * Math.sin(view.theta),
-      focus.y + CAMERA_DISTANCE * Math.cos(view.phi),
-      focus.z + CAMERA_DISTANCE * Math.sin(view.phi) * Math.cos(view.theta),
-    );
-    camera.lookAt(focus);
-    camera.updateProjectionMatrix();
-    camera.updateMatrixWorld();
-  };
-
-  /** Default orbit point, nudged right while an overlay covers the right edge. */
-  const homeFocus = (atZoom: number): THREE.Vector3 => {
-    const home = CAMERA_TARGET.clone();
-    if (rightInset === 0) return home;
-    const worldPerPx = (camera.right - camera.left) / atZoom / size.width;
-    camRight.setFromMatrixColumn(camera.matrixWorld, 0);
-    return home.addScaledVector(camRight, (rightInset / 2) * worldPerPx);
-  };
-
-  const clampFocus = () => {
-    focus.x = THREE.MathUtils.clamp(focus.x, -FOCUS_BOUNDS.x, FOCUS_BOUNDS.x);
-    focus.y = THREE.MathUtils.clamp(focus.y, FOCUS_BOUNDS.yMin, FOCUS_BOUNDS.yMax);
-    focus.z = THREE.MathUtils.clamp(focus.z, -FOCUS_BOUNDS.z, FOCUS_BOUNDS.z);
-  };
-
-  /** Request a new zoom level, anchored at a point in normalized device coords. */
-  const requestZoom = (nextTarget: number, anchorX: number, anchorY: number) => {
-    zoom.target = THREE.MathUtils.clamp(nextTarget, ZOOM_MIN, ZOOM_MAX);
-    zoom.anchorX = anchorX;
-    zoom.anchorY = anchorY;
-    focusGoal = null;
-    inputs.onZoomChange?.(zoom.target / DEFAULT_VIEW.zoom);
-  };
-
-  /**
-   * Ease zoom toward its target. For an orthographic camera a screen point at NDC n sits
-   * n * halfExtent / zoom away from the focus, so panning the focus by
-   * n * halfExtent * (1/z0 - 1/z1) keeps whatever is under the cursor in place.
-   */
-  const stepZoom = (dt: number): boolean => {
-    const prev = view.zoom;
-    if (Math.abs(zoom.target - prev) < 1e-4) return false;
-    const blend = reduceMotion ? 1 : 1 - Math.exp(-ZOOM_EASE * dt);
-    let next = prev + (zoom.target - prev) * blend;
-    if (Math.abs(zoom.target - next) < 1e-3) next = zoom.target;
-
-    const k = 1 / prev - 1 / next;
-    camRight.setFromMatrixColumn(camera.matrixWorld, 0);
-    camUp.setFromMatrixColumn(camera.matrixWorld, 1);
-    focus.addScaledVector(camRight, zoom.anchorX * camera.right * k);
-    focus.addScaledVector(camUp, zoom.anchorY * camera.top * k);
-    if (next < prev) {
-      // Drift back home while zooming out so the full office re-centres at minimum zoom.
-      const homeBlend = (prev - next) / Math.max(1e-3, prev - ZOOM_MIN);
-      focus.lerp(homeFocus(next), Math.min(1, homeBlend));
-    }
-    clampFocus();
-    view.zoom = next;
-    applyCamera();
-    return true;
-  };
-
-  const stepFocus = (dt: number): boolean => {
-    if (!focusGoal) return false;
-    focus.lerp(focusGoal, reduceMotion ? 1 : 1 - Math.exp(-FOCUS_EASE * dt));
-    if (focus.distanceToSquared(focusGoal) < 1e-5) {
-      focus.copy(focusGoal);
-      focusGoal = null;
-    }
-    applyCamera();
-    return true;
-  };
+  const { scene, sun, world } = createSceneWorld(inputs);
+  applyAtmosphere(world);
+  applyShadowBounds(world, sun);
 
   const resize = () => {
-    size.width = Math.max(1, wrap.clientWidth);
-    size.height = Math.max(1, wrap.clientHeight);
-    renderer.setSize(size.width, size.height, false);
-    applyCamera();
+    const width = Math.max(1, wrap.clientWidth);
+    const height = Math.max(1, wrap.clientHeight);
+    renderer.setSize(width, height, false);
+    world.rig.resize(width, height);
   };
   resize();
   const resizeObserver = new ResizeObserver(resize);
   resizeObserver.observe(wrap);
 
   const entries = new Map<string, AvatarSceneEntry>();
-  const raycaster = new THREE.Raycaster();
-  const pointer = new THREE.Vector2();
+  const pickAt = createPicker({ canvas, camera: world.rig.camera, entries });
+  const syncEntries = createRosterSync({
+    world,
+    entries,
+    onKeyChanged: () => applyShadowBounds(world, sun),
+  });
   let hoveredId: string | null = null;
+  const dragging = { active: false };
+  const controls = bindSceneControls(canvas, world.rig, {
+    pickAt,
+    onHover: (id) => {
+      hoveredId = id;
+    },
+    onPick: inputs.onPick,
+    dragging,
+  });
 
-  const pickAt = (clientX: number, clientY: number): string | null => {
-    const rect = canvas.getBoundingClientRect();
-    pointer.set(
-      ((clientX - rect.left) / rect.width) * 2 - 1,
-      -((clientY - rect.top) / rect.height) * 2 + 1,
-    );
-    raycaster.setFromCamera(pointer, camera);
-    const targets = [...entries.values()].map((e) => e.hitTarget);
-    const hit = raycaster.intersectObjects(targets, false)[0];
-    const id = hit?.object.userData.employeeId;
-    return typeof id === "string" ? id : null;
-  };
-
-  const drag = { active: false, moved: 0, x: 0, y: 0 };
-  const onPointerDown = (e: PointerEvent) => {
-    if (e.button !== 0) return;
-    drag.active = true;
-    drag.moved = 0;
-    drag.x = e.clientX;
-    drag.y = e.clientY;
-  };
-  const onPointerMove = (e: PointerEvent) => {
-    if (drag.active) {
-      const dx = e.clientX - drag.x;
-      const dy = e.clientY - drag.y;
-      drag.moved += Math.abs(dx) + Math.abs(dy);
-      drag.x = e.clientX;
-      drag.y = e.clientY;
-      view.theta -= dx * 0.006;
-      view.phi = THREE.MathUtils.clamp(view.phi - dy * 0.005, PHI_MIN, PHI_MAX);
-      applyCamera();
-      return;
-    }
-    if (e.target !== canvas) return;
-    hoveredId = pickAt(e.clientX, e.clientY);
-    canvas.style.cursor = hoveredId ? "pointer" : "grab";
-  };
-  const onPointerUp = (e: PointerEvent) => {
-    if (!drag.active) return;
-    drag.active = false;
-    if (drag.moved > CLICK_SLOP_PX || e.target !== canvas) return;
-    const id = pickAt(e.clientX, e.clientY);
-    if (id) inputs.onPick(id);
-  };
-  const onPointerLeave = () => {
-    hoveredId = null;
-  };
-  const onPointerCancel = () => {
-    drag.active = false;
-  };
-  const onWheel = (e: WheelEvent) => {
-    e.preventDefault();
-    const deltaPx = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? e.deltaY * WHEEL_LINE_PX : e.deltaY;
-    const rect = canvas.getBoundingClientRect();
-    requestZoom(
-      zoom.target * Math.exp(-deltaPx * ZOOM_WHEEL_SENSITIVITY),
-      ((e.clientX - rect.left) / rect.width) * 2 - 1,
-      -((e.clientY - rect.top) / rect.height) * 2 + 1,
-    );
-  };
-
-  canvas.addEventListener("pointerdown", onPointerDown);
-  canvas.addEventListener("pointerleave", onPointerLeave);
-  canvas.addEventListener("wheel", onWheel, { passive: false });
-  window.addEventListener("pointermove", onPointerMove);
-  window.addEventListener("pointerup", onPointerUp);
-  window.addEventListener("pointercancel", onPointerCancel);
-
-  const deskSlots = new Map<string, number>();
-  const nextFreeSlot = () => {
-    const used = new Set(deskSlots.values());
-    let slot = 0;
-    while (used.has(slot)) slot++;
-    return slot;
-  };
-
-  const syncEntries = (employees: readonly SessionEmployee[]) => {
-    const live = new Set(employees.map((e) => e.id));
-    for (const [id, entry] of entries) {
-      if (live.has(id)) continue;
-      scene.remove(entry.group, entry.station);
-      // Materials are shared through the mesh kit, so only free per-avatar geometry here.
-      disposeObject(entry.group, { materials: false });
-      disposeObject(entry.station, { materials: false });
-      entry.statusRing.material.dispose();
-      entry.selectRing.material.dispose();
-      (entry.hitTarget.material as THREE.Material).dispose();
-      entries.delete(id);
-      deskSlots.delete(id);
-    }
-    for (const emp of employees) {
-      if (entries.has(emp.id)) continue;
-      const slot = nextFreeSlot();
-      deskSlots.set(emp.id, slot);
-      entries.set(emp.id, createDeskAndEmployeeAvatar(scene, kit, emp, slot));
-    }
-  };
-
-  const projected = new THREE.Vector3();
-  const placeTag = (entry: AvatarSceneEntry, el: HTMLElement) => {
-    projected.copy(entry.group.position);
-    projected.y += TAG_ANCHOR_Y * entry.group.scale.y;
-    projected.project(camera);
-    const x = (projected.x * 0.5 + 0.5) * size.width;
-    const y = (-projected.y * 0.5 + 0.5) * size.height;
-    el.style.transform = `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0) translate(-50%, -100%)`;
-    el.style.zIndex = String(Math.round((1 - projected.z) * 1000));
-    el.dataset.placed = "true";
-    el.classList.toggle("is-hovered", hoveredId === entry.employeeId);
-  };
-
-  let frameId = 0;
-  let lastMs = 0;
-  const clock = new THREE.Clock();
-  const tick = (nowMs: number) => {
-    frameId = requestAnimationFrame(tick);
-    // Run uncapped while the camera is animating so zoom feels fluid; 30fps otherwise.
-    const animatingCamera = drag.active || focusGoal !== null || zoom.target !== view.zoom;
-    // A hidden browser tab or a hidden app tab (zero-size wrapper) only needs a slow heartbeat.
-    const offscreen = document.hidden || wrap.clientWidth === 0;
-    const minDelta = offscreen ? HIDDEN_FRAME_MS : animatingCamera ? 0 : ACTIVE_FRAME_MS;
-    if (nowMs - lastMs < minDelta) return;
-    if (offscreen) {
-      lastMs = nowMs;
-      return;
-    }
-    const dt = lastMs === 0 ? 0 : Math.min(MAX_DT, (nowMs - lastMs) / 1000);
-    lastMs = nowMs;
-    const t = clock.getElapsedTime();
-    stepZoom(dt);
-    stepFocus(dt);
-
-    const employees = inputs.getEmployees();
-    syncEntries(employees);
-    const pendingIds = new Set(inputs.getPermissions().map((p) => p.session_employee_id));
-    const selectedId = inputs.getSelectedId();
-    const workingIds = inputs.getWorkingIds();
-    const placements = planPlacements(employees, (id) => entries.get(id)?.deskPos);
-
-    for (const emp of employees) {
-      const entry = entries.get(emp.id);
-      const placement = placements.get(emp.id);
-      if (!entry || !placement) continue;
-      const status = deriveAgentStatus(emp, pendingIds, workingIds);
-      updateAvatar(
-        entry,
-        {
-          placement,
-          activity: status.activity,
-          pose: emp.avatar_pose,
-          statusHex: status.hex,
-          selected: selectedId === emp.id,
-          hovered: hoveredId === emp.id,
-        },
-        t,
-        dt,
-      );
-      const tag = inputs.tagElements.get(emp.id);
-      if (tag) placeTag(entry, tag);
-    }
-    renderer.render(scene, camera);
-  };
-  frameId = requestAnimationFrame(tick);
+  const debugScene =
+    import.meta.env.DEV || new URLSearchParams(window.location.search).get("debugScene") === "1";
+  const frame = createFrameLoop({
+    wrap,
+    renderer,
+    rig: world.rig,
+    inputs,
+    world,
+    entries,
+    debugScene,
+    dragging,
+    hovered: () => hoveredId,
+    syncScene: (employees) => {
+      syncEntries(employees);
+      syncZoneOccupants(world, employees);
+    },
+  });
+  frame.start();
 
   return {
-    resetView: () => {
-      view.theta = DEFAULT_VIEW.theta;
-      view.phi = DEFAULT_VIEW.phi;
-      zoom.target = DEFAULT_VIEW.zoom;
-      zoom.anchorX = 0;
-      zoom.anchorY = 0;
-      inputs.onZoomChange?.(1);
-      applyCamera();
-      focusGoal = homeFocus(DEFAULT_VIEW.zoom);
-    },
-    setRightInset: (px: number) => {
-      const delta = (px - rightInset) / 2;
-      rightInset = px;
-      if (delta === 0) return;
-      const worldPerPx = (camera.right - camera.left) / view.zoom / size.width;
-      camRight.setFromMatrixColumn(camera.matrixWorld, 0);
-      focusGoal = (focusGoal ?? focus).clone().addScaledVector(camRight, delta * worldPerPx);
-    },
-    zoomIn: () => requestZoom(zoom.target * ZOOM_BUTTON_STEP, 0, 0),
-    zoomOut: () => requestZoom(zoom.target / ZOOM_BUTTON_STEP, 0, 0),
+    resetView: () => world.rig.resetView(),
+    zoomIn: () => world.rig.zoomIn(),
+    zoomOut: () => world.rig.zoomOut(),
+    setRightInset: (px: number) => world.rig.setRightInset(px),
     dispose: () => {
-      cancelAnimationFrame(frameId);
+      frame.stop();
       resizeObserver.disconnect();
-      canvas.removeEventListener("pointerdown", onPointerDown);
-      canvas.removeEventListener("pointerleave", onPointerLeave);
-      canvas.removeEventListener("wheel", onWheel);
-      window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerup", onPointerUp);
-      window.removeEventListener("pointercancel", onPointerCancel);
+      controls.dispose();
+      world.rig.dispose();
       scene.traverse((obj) => {
         if (obj instanceof THREE.DirectionalLight) obj.dispose();
       });
@@ -414,26 +292,347 @@ function runOfficeScene(inputs: SceneInputs, renderer: THREE.WebGLRenderer): Sce
   };
 }
 
-function addLights(scene: THREE.Scene): void {
-  scene.add(new THREE.HemisphereLight(0xfff1e0, 0xb39a82, 1.25));
+interface ControlDeps {
+  pickAt: (clientX: number, clientY: number) => string | null;
+  onHover: (employeeId: string | null) => void;
+  onPick: (employeeId: string) => void;
+  dragging: { active: boolean };
+}
 
-  const sun = new THREE.DirectionalLight(0xffe2c4, 2.1);
-  sun.position.set(-6, 16, 9);
-  sun.target.position.set(0, 0, 0);
-  sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
-  sun.shadow.camera.left = -14;
-  sun.shadow.camera.right = 14;
-  sun.shadow.camera.top = 12;
-  sun.shadow.camera.bottom = -12;
-  sun.shadow.camera.near = 1;
-  sun.shadow.camera.far = 50;
-  sun.shadow.bias = -0.0004;
-  sun.shadow.normalBias = 0.03;
-  sun.shadow.radius = 4;
-  scene.add(sun, sun.target);
+/** Pointer drag = orbit, wheel = zoom, click = pick. Returns an unbind function. */
+function bindSceneControls(
+  canvas: HTMLCanvasElement,
+  rig: CameraRig,
+  deps: ControlDeps,
+): { dispose: () => void } {
+  const drag = { active: false, moved: 0, x: 0, y: 0 };
+  const onPointerDown = (e: PointerEvent) => {
+    if (e.button !== 0) return;
+    drag.active = true;
+    drag.moved = 0;
+    drag.x = e.clientX;
+    drag.y = e.clientY;
+    deps.dragging.active = true;
+  };
+  const onPointerMove = (e: PointerEvent) => {
+    if (drag.active) {
+      const dx = e.clientX - drag.x;
+      const dy = e.clientY - drag.y;
+      drag.moved += Math.abs(dx) + Math.abs(dy);
+      drag.x = e.clientX;
+      drag.y = e.clientY;
+      rig.orbit(dx, dy);
+      return;
+    }
+    if (e.target !== canvas) return;
+    deps.onHover(deps.pickAt(e.clientX, e.clientY));
+  };
+  const onPointerUp = (e: PointerEvent) => {
+    if (!drag.active) return;
+    drag.active = false;
+    deps.dragging.active = false;
+    if (drag.moved > CLICK_SLOP_PX || e.target !== canvas) return;
+    const id = deps.pickAt(e.clientX, e.clientY);
+    if (id) deps.onPick(id);
+  };
+  const onPointerLeave = () => deps.onHover(null);
+  const onPointerCancel = () => {
+    drag.active = false;
+    deps.dragging.active = false;
+  };
+  const onWheel = (e: WheelEvent) => {
+    e.preventDefault();
+    const deltaPx = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? e.deltaY * WHEEL_LINE_PX : e.deltaY;
+    const rect = canvas.getBoundingClientRect();
+    rig.requestZoom(
+      rig.zoomTarget() * Math.exp(-deltaPx * WHEEL_SENSITIVITY),
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1,
+      true,
+    );
+  };
 
-  const fill = new THREE.DirectionalLight(0xc7d6ff, 0.55);
-  fill.position.set(12, 8, -4);
-  scene.add(fill);
+  canvas.addEventListener("pointerdown", onPointerDown);
+  canvas.addEventListener("pointerleave", onPointerLeave);
+  canvas.addEventListener("wheel", onWheel, { passive: false });
+  window.addEventListener("pointermove", onPointerMove);
+  window.addEventListener("pointerup", onPointerUp);
+  window.addEventListener("pointercancel", onPointerCancel);
+  return {
+    dispose: () => {
+      canvas.removeEventListener("pointerdown", onPointerDown);
+      canvas.removeEventListener("pointerleave", onPointerLeave);
+      canvas.removeEventListener("wheel", onWheel);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerCancel);
+    },
+  };
+}
+
+function createPicker(deps: {
+  canvas: HTMLCanvasElement;
+  camera: THREE.OrthographicCamera;
+  entries: Map<string, AvatarSceneEntry>;
+}) {
+  const raycaster = new THREE.Raycaster();
+  const pointer = new THREE.Vector2();
+  return (clientX: number, clientY: number): string | null => {
+    const rect = deps.canvas.getBoundingClientRect();
+    pointer.set(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    raycaster.setFromCamera(pointer, deps.camera);
+    const targets = [...deps.entries.values()].map((e) => e.hitTarget);
+    const hit = raycaster.intersectObjects(targets, false)[0];
+    const id = hit?.object.userData.employeeId;
+    return typeof id === "string" ? id : null;
+  };
+}
+
+interface RosterSyncDeps {
+  world: SceneWorld;
+  entries: Map<string, AvatarSceneEntry>;
+  onKeyChanged: () => void;
+}
+
+/**
+ * Adopts the roster incrementally: new agents take desk slots, removals punch
+ * holes that compact via {@link relocateDesk}, and the layout re-applies when
+ * the desk frame changes. The first sync merely adopts the roster that existed
+ * before the scene opened — the camera stays on the default view so small
+ * offices open at "100%" (R6) — while the home view refreshes to match.
+ */
+function createRosterSync(deps: RosterSyncDeps) {
+  const { world, entries } = deps;
+  let slots = new Map<string, number>();
+  let rosterKey = "";
+  let initialSyncDone = false;
+
+  return (employees: readonly SessionEmployee[]): void => {
+    const ids = employees.map((e) => e.id);
+    const key = ids.join("|");
+    if (key !== rosterKey) {
+      rosterKey = key;
+      const { slots: next, moved } = reconcileDeskSlots(slots, ids);
+      for (const id of moved) {
+        const entry = entries.get(id);
+        if (entry) relocateDesk(entry, deskSlotPosition(next.get(id) ?? 0));
+      }
+      slots = new Map(next);
+      const nextLayout = computeOfficeLayout(ids.length);
+      const countChanged = nextLayout.desks.count !== world.layout.desks.count;
+      const firstSync = !initialSyncDone;
+      initialSyncDone = true;
+      const keyChanged = nextLayout.key !== world.layout.key;
+      if (keyChanged) {
+        world.environment.applyLayout(nextLayout);
+        applyAtmosphere(world);
+        deps.onKeyChanged();
+      }
+      world.layout = nextLayout;
+      if (firstSync) world.rig.refreshHome();
+      else if (countChanged) world.rig.onLayoutChanged();
+    }
+    removeDeadEntries(entries, ids, world.scene);
+    for (const emp of employees) {
+      if (entries.has(emp.id)) continue;
+      entries.set(
+        emp.id,
+        createDeskAndEmployeeAvatar(
+          world.scene,
+          world.kit,
+          emp,
+          deskSlotPosition(slots.get(emp.id) ?? 0),
+        ),
+      );
+    }
+  };
+}
+
+function removeDeadEntries(
+  entries: Map<string, AvatarSceneEntry>,
+  liveIds: readonly string[],
+  scene: THREE.Scene,
+): void {
+  const live = new Set(liveIds);
+  for (const [id, entry] of entries) {
+    if (live.has(id)) continue;
+    scene.remove(entry.group, entry.station);
+    // Materials are shared through the mesh kit, so only free per-avatar geometry here.
+    disposeObject(entry.group, { materials: false });
+    disposeObject(entry.station, { materials: false });
+    entry.statusRing.material.dispose();
+    entry.selectRing.material.dispose();
+    (entry.hitTarget.material as THREE.Material).dispose();
+    entries.delete(id);
+  }
+}
+
+/** Grow/trim the zone floors when people move between desks and zones (FR-009). */
+function syncZoneOccupants(world: SceneWorld, employees: readonly SessionEmployee[]): void {
+  const counts = zoneCounts(employees);
+  const kinds = ["war_room", "lounge", "kanban"] as const;
+  if (kinds.every((kind) => counts[kind] === world.occupantCounts[kind])) return;
+  const fpBefore = footprintKey(effectiveFootprint(world));
+  for (const kind of kinds) world.occupantCounts[kind] = counts[kind];
+  world.environment.setOccupants("lounge", world.occupantCounts.lounge);
+  world.environment.setOccupants("kanban", world.occupantCounts.kanban);
+  world.warRoom.setOccupants(world.occupantCounts.war_room);
+  if (footprintKey(effectiveFootprint(world)) !== fpBefore) world.rig.onLayoutChanged();
+}
+
+interface FrameLoopDeps {
+  wrap: HTMLElement;
+  renderer: THREE.WebGLRenderer;
+  rig: CameraRig;
+  inputs: SceneInputs;
+  world: SceneWorld;
+  entries: Map<string, AvatarSceneEntry>;
+  debugScene: boolean;
+  dragging: { active: boolean };
+  hovered: () => string | null;
+  syncScene: (employees: readonly SessionEmployee[]) => void;
+}
+
+function createFrameLoop(deps: FrameLoopDeps): { start: () => void; stop: () => void } {
+  const { wrap, renderer, rig } = deps;
+  let frameId = 0;
+  let lastMs = 0;
+  const clock = new THREE.Clock();
+
+  const tick = (nowMs: number): void => {
+    frameId = requestAnimationFrame(tick);
+    // Run uncapped while the camera is animating so zoom feels fluid; 30fps otherwise.
+    const offscreen = document.hidden || wrap.clientWidth === 0;
+    const animating = deps.dragging.active || rig.isAnimating();
+    const minDelta = offscreen ? HIDDEN_FRAME_MS : animating ? 0 : ACTIVE_FRAME_MS;
+    if (nowMs - lastMs < minDelta) return;
+    if (offscreen) {
+      lastMs = nowMs;
+      return;
+    }
+    const dt = lastMs === 0 ? 0 : Math.min(MAX_DT, (nowMs - lastMs) / 1000);
+    lastMs = nowMs;
+    const t = clock.getElapsedTime();
+    rig.stepZoom(dt);
+    rig.stepFocus(dt);
+
+    const employees = deps.inputs.getEmployees();
+    deps.syncScene(employees);
+    if (deps.debugScene) logRenderStats(wrap, renderer, deps.entries, deps.world.scene);
+    renderAgents(deps, employees, t, dt);
+    renderer.render(deps.world.scene, rig.camera);
+  };
+
+  return {
+    start: () => {
+      frameId = requestAnimationFrame(tick);
+    },
+    stop: () => cancelAnimationFrame(frameId),
+  };
+}
+
+/** Environment-only geometry count for the `?debugScene=1` overlay (T025). */
+function logRenderStats(
+  wrap: HTMLElement,
+  renderer: THREE.WebGLRenderer,
+  entries: Map<string, AvatarSceneEntry>,
+  scene: THREE.Scene,
+): void {
+  const skip = new Set<THREE.Object3D>();
+  for (const entry of entries.values()) {
+    skip.add(entry.group);
+    skip.add(entry.station);
+  }
+  const seen = new Set<string>();
+  let geometryCount = 0;
+  scene.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.geometry) return;
+    // traverse() cannot prune subtrees, so check ancestry against the skip set.
+    let parent: THREE.Object3D | null = obj.parent;
+    while (parent) {
+      if (skip.has(parent)) return;
+      parent = parent.parent;
+    }
+    if (!seen.has(mesh.geometry.uuid)) {
+      seen.add(mesh.geometry.uuid);
+      geometryCount += 1;
+    }
+  });
+  wrap.dataset.geometries = String(geometryCount);
+  wrap.dataset.textures = String(renderer.info.memory.textures);
+}
+
+const tagProjected = new THREE.Vector3();
+
+function renderAgents(
+  deps: FrameLoopDeps,
+  employees: readonly SessionEmployee[],
+  t: number,
+  dt: number,
+): void {
+  const pendingIds = new Set(deps.inputs.getPermissions().map((p) => p.session_employee_id));
+  const selectedId = deps.inputs.getSelectedId();
+  const workingIds = deps.inputs.getWorkingIds();
+  const hoveredId = deps.hovered();
+  const placements = planPlacements(
+    employees,
+    (id) => deps.entries.get(id)?.deskPos,
+    deps.world.layout,
+  );
+
+  for (const emp of employees) {
+    const entry = deps.entries.get(emp.id);
+    const placement = placements.get(emp.id);
+    if (!entry || !placement) continue;
+    const status = deriveAgentStatus(emp, pendingIds, workingIds);
+    updateAvatar(
+      entry,
+      {
+        placement,
+        activity: status.activity,
+        pose: emp.avatar_pose,
+        statusHex: status.hex,
+        selected: selectedId === emp.id,
+        hovered: hoveredId === emp.id,
+      },
+      t,
+      dt,
+    );
+    const tag = deps.inputs.tagElements.get(emp.id);
+    if (tag) {
+      placeTagAt(tag, entry, deps.rig.camera, deps.wrap, hoveredId);
+    }
+  }
+}
+
+function placeTagAt(
+  el: HTMLElement,
+  entry: AvatarSceneEntry,
+  camera: THREE.OrthographicCamera,
+  wrap: HTMLElement,
+  hoveredId: string | null,
+): void {
+  tagProjected.copy(entry.group.position);
+  tagProjected.y += TAG_ANCHOR_Y * entry.group.scale.y;
+  tagProjected.project(camera);
+  if (
+    tagProjected.x < -TAG_OFFSCREEN_MARGIN ||
+    tagProjected.x > TAG_OFFSCREEN_MARGIN ||
+    tagProjected.y < -TAG_OFFSCREEN_MARGIN ||
+    tagProjected.y > TAG_OFFSCREEN_MARGIN
+  ) {
+    el.dataset.offscreen = "true";
+  } else {
+    delete el.dataset.offscreen;
+  }
+  const x = (tagProjected.x * 0.5 + 0.5) * wrap.clientWidth;
+  const y = (-tagProjected.y * 0.5 + 0.5) * wrap.clientHeight;
+  el.style.transform = `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0) translate(-50%, -100%)`;
+  el.style.zIndex = String(Math.round((1 - tagProjected.z) * 1000));
+  el.dataset.placed = "true";
+  el.classList.toggle("is-hovered", hoveredId === entry.employeeId);
 }

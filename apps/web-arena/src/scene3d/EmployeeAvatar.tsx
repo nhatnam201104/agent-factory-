@@ -1,6 +1,6 @@
 import type { SessionEmployee } from "@factory-arena/protocol";
 import * as THREE from "three";
-import { type FloorPoint, deskPosition } from "./layout.js";
+import type { FloorPoint } from "./layout.js";
 import { type MeshKit, createPlant, freezeStatic } from "./meshKit.js";
 import { createChair } from "./officeEnvironment.js";
 
@@ -20,8 +20,7 @@ export interface AvatarSceneEntry {
   selectRing: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
   /** Invisible, generous collider used for click / hover picking. */
   hitTarget: THREE.Mesh;
-  deskPos: FloorPoint;
-  /** Stable per-employee phase offset so animations don't move in lockstep. */
+  deskPos: FloorPoint /** Stable per-employee phase offset so animations don't move in lockstep. */;
   seed: number;
 }
 
@@ -58,10 +57,9 @@ export function createDeskAndEmployeeAvatar(
   scene: THREE.Scene,
   kit: MeshKit,
   emp: SessionEmployee,
-  index: number,
+  deskPos: FloorPoint,
 ): AvatarSceneEntry {
   const seed = hashString(emp.id);
-  const deskPos = deskPosition(index);
   const shirt = DEPT_COLORS[emp.department] ?? 0x8aa8ff;
 
   const station = buildDeskStation(kit, shirt, seed);
@@ -125,6 +123,17 @@ export function createDeskAndEmployeeAvatar(
     deskPos,
     seed: (seed % 1000) / 160,
   };
+}
+
+/**
+ * Move an already-built desk station to a new floor point (compaction after a
+ * removal). The avatar itself keeps walking via its normal placement flow.
+ */
+export function relocateDesk(entry: AvatarSceneEntry, point: FloorPoint): void {
+  entry.deskPos = point;
+  entry.station.position.set(point.x, 0, point.z);
+  entry.station.updateMatrix();
+  entry.station.updateMatrixWorld(true);
 }
 
 /** Capsule limb hanging from a pivot so it can swing from the shoulder / hip. */
